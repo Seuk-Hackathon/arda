@@ -1,36 +1,993 @@
-/* 지원자 본인 화면. 폰에서 여는 것이 기본이라 좁은 폭을 기준으로 짠다
-   (05-design §9). 토큰은 전부 tokens.css. */
+/* 지원자 본인 화면.
 
+   **2026-09-11 — 웹에서는 가로를 쓴다.** 그 전에는 폰 폭(480px) 하나로 짜서
+   1280px 모니터에서 가운데 480px 띠만 있고 양옆이 비었다. 앱을 브라우저에
+   옮겨 놓은 것처럼 보였다.
+
+   그렇다고 끝까지 펴지도 않는다. 지원자가 가진 것은 지원 몇 건에 할 일 셋뿐이라
+   1340px 로 펴면 한 줄에 400px 가까이 빈 채로 버튼만 저 멀리 오른쪽에 선다.
+   **본문은 1040px 에서 자르고 상단 바만 끝까지** 간다.
+
+   폰은 그대로다 — 900px 아래에서 한 열로 떨어진다(맨 아래 미디어 쿼리).
+   토큰은 전부 tokens.css. */
+
+/* **담당자 화면(Layout.shell)과 같은 셸이다.** 전에는 평평한 --bg 하나였고,
+   그러면 이 화면만 다른 제품처럼 보인다 — 나머지 화면은 전부 오로라 위에
+   유리가 떠 있는 한 장이다. 같은 오로라 넷 + 같은 그레인을 쓴다. */
 .page {
+  position: relative;
   min-height: 100vh;
-  background: var(--bg);
   display: flex;
-  justify-content: center;
-  padding: var(--sp-6) var(--sp-4) var(--sp-8);
+  flex-direction: column;
+  background:
+    radial-gradient(46% 44% at 15% 20%, rgba(59, 130, 246, .32) 0%, rgba(7, 11, 20, 0) 68%),
+    radial-gradient(42% 40% at 84% 10%, rgba(139, 92, 246, .28) 0%, rgba(7, 11, 20, 0) 70%),
+    radial-gradient(52% 50% at 74% 90%, rgba(16, 185, 129, .22) 0%, rgba(7, 11, 20, 0) 72%),
+    radial-gradient(40% 40% at 28% 94%, rgba(34, 211, 238, .18) 0%, rgba(7, 11, 20, 0) 70%),
+    var(--bg);
 }
 
-.column {
+/* 그레인 — 넓은 어두운 면에 오로라가 만드는 밴딩을 깨고 재질감을 준다.
+   Layout.shell::after 와 같은 값이다. 드롭다운보다 아래(--z-sticky)라
+   계정 메뉴 위에는 끼지 않는다. */
+.page::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: var(--z-sticky);
+  pointer-events: none;
+  opacity: .05;
+  mix-blend-mode: overlay;
+  background-image: var(--grain);
+  background-size: 160px 160px;
+}
+
+/* ── 상단 바 ──────────────────────────────────────
+
+   이름·이메일·로그아웃을 한 자리로 모은다. 전에는 이름·이메일이 카드 하나를
+   통째로 쓰고 로그아웃은 **페이지 맨 아래 글자 링크**였다 — 지원이 여럿이면
+   화면을 다 내려야 나갈 수 있었다. */
+.topbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  height: 64px;
+  /* 본문과 같은 들여쓰기 — 담당자 화면의 제목 띠와 같은 규칙이다.
+     안 맞추면 로고와 아래 내용이 서로 다른 세로선에서 시작한다 */
+  padding: 0 var(--content-x);
+  /* 사이드바·제목 띠와 같은 유리. 이 화면에는 사이드바가 없지만 크롬은
+     한 벌이라 재질이 갈리면 안 된다(PageHead.module.css 의 같은 주석) */
+  background: var(--bg-chrome);
+  backdrop-filter: var(--glass);
+  border-bottom: var(--border-w) solid var(--sidebar-line);
+  /* backdrop-filter 가 이 띠를 쌓임 맥락으로 만든다 — z-index 를 안 주면
+     본문이 위에 그려지고 계정 메뉴가 카드 뒤로 깔린다(2026-09-07 과 같은 사고) */
+  position: relative;
+  z-index: var(--z-sticky);
+}
+
+.gap {
+  flex: 1;
+}
+
+/* 로고. **글자에 색을 쓰지 않는다** — 색은 마크가 내고 글자는 흰색이다
+   (로그인 화면과 같은 규격) */
+.logo {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin: 0;
+  font-size: var(--font-h2);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: #fff;
+  text-shadow: var(--ts-heading);
+  white-space: nowrap;
+}
+
+/* 마크는 빛이라 발광까지가 그림이다 */
+.logoMark {
+  flex: none;
+  display: block;
+  filter: drop-shadow(0 0 12px rgba(96, 165, 250, .55));
+}
+
+/* 로고 뒤에 화면 이름. **담당자 화면에는 왼쪽 메뉴가 있어 지금 어디인지 알 수
+   있는데 지원자 화면에는 메뉴가 없다** — 이 띠가 유일한 단서다 */
+.divider {
+  width: 1px;
+  height: 18px;
+  background: var(--border);
+  flex: none;
+}
+
+.where {
+  font-size: var(--font-sm);
+  font-weight: 500;
+  color: var(--text-sub);
+  white-space: nowrap;
+}
+
+/* ── 계정 ────────────────────────────────────────
+
+   담당자 쪽 AccountMenu 와 같은 규격이다. **평소에는 테두리도 바탕도 없다** —
+   늘 보이는 자리라 버튼처럼 서 있으면 띠에서 계정이 제일 센 요소가 된다
+   (AccountMenu.module.css 의 같은 주석). */
+.account {
+  position: relative;
+  flex: none;
+}
+
+.trigger {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  height: 36px;
+  padding: 0 var(--sp-2) 0 3px;
+  border-radius: var(--r-pill);
+  border: var(--border-w) solid transparent;
+  background: transparent;
+  font-family: var(--sans);
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease);
+}
+
+.trigger:hover {
+  background: var(--bg-sunken);
+}
+
+/* 열려 있는 동안만 눌린 채로 남는다 — 메뉴가 어디서 나왔는지 보여야 한다 */
+.triggerOn {
+  background: var(--bg-sunken);
+  border-color: var(--border-soft);
+}
+
+.trigger:focus-visible {
+  outline: 2px solid var(--accent-text);
+  outline-offset: 2px;
+}
+
+.avatar {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  border: var(--border-w) solid rgba(34, 211, 238, .28);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--font-sm);
+  font-weight: 700;
+  color: var(--accent-text);
+}
+
+.tname {
+  font-size: var(--font-sm);
+  color: var(--text);
+}
+
+.caret {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  stroke: var(--text-sub);
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  /* 메일 주소가 들어갈 만큼만 */
+  min-width: 208px;
+  max-width: 280px;
+  z-index: var(--z-dropdown);
+  display: flex;
+  flex-direction: column;
+  padding: var(--sp-2);
+  border: var(--border-w) solid var(--border);
+  border-radius: 10px;
+  background: #10182A;
+  box-shadow: var(--sh-overlay);
+}
+
+.mWho {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-2) var(--sp-3);
+}
+
+.mWho .avatar {
+  width: 32px;
+  height: 32px;
+  font-size: var(--font-body);
+}
+
+.mText {
+  min-width: 0;
+}
+
+.mName {
+  display: block;
+  font-size: var(--font-sm);
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* 이메일은 여기서 한 번만 보이면 된다 — 늘 띠에 걸어 둘 값이 아니다 */
+.mMail {
+  display: block;
+  font-size: var(--font-cap);
+  color: var(--text-sub);
+  font-family: var(--mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sep {
+  height: 1px;
+  background: var(--border-soft);
+  margin: 0 calc(var(--sp-2) * -1) var(--sp-2);
+}
+
+.mItem {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
   width: 100%;
-  max-width: 480px;
+  height: 36px;
+  padding: 0 var(--sp-2);
+  border: none;
+  border-radius: var(--r-ctl);
+  background: none;
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: var(--font-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.mItem:hover {
+  background: var(--bg-sunken);
+}
+
+.mItem svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  stroke: var(--text-sub);
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* ── 본문 ────────────────────────────────────────── */
+
+/* 현황 — **화면 폭을 쓴다.** 가운데 1040px 섬으로 두면 넓은 모니터에서
+   양옆이 비어 화면 한가운데 몰린 것처럼 보인다. 담당자 화면과 같은
+   들여쓰기(--content-x)로 채운다.
+
+   대신 **오른쪽 여정에 상한을 둔다**(.detail) — 줄이 끝없이 늘어나면
+   라벨과 버튼 사이가 벌어져 눈이 화면 끝에서 끝까지 간다. 넓어지는 것은
+   여백이지 줄이 아니다. */
+.wide {
+  flex: 1;
+  min-width: 0;
+  padding: var(--sp-5) var(--content-x) var(--sp-7);
   display: flex;
   flex-direction: column;
   gap: var(--sp-4);
 }
 
-.logo {
-  font-size: var(--font-h1);
-  font-weight: 700;
-  color: var(--text);
-  text-shadow: var(--ts-heading);
-  margin: 0;
-  white-space: nowrap;
-  letter-spacing: -0.01em;
+/* 로그인·로딩 — 좁다. 폼까지 1040px 로 펴면 칸 하나가 화면을 가로지른다 */
+.column {
+  width: 100%;
+  max-width: 480px;
+  margin: 0 auto;
+  padding: var(--sp-6) var(--sp-4) var(--sp-8);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
 }
 
-.seed {
+/* 표본 데이터 알림(?preview). **눈에 띄어야 한다** — 이 줄의 목적이
+   진짜 데이터와 헷갈리지 않게 하는 것이다. 개발에서만 뜬다. */
+.previewNote {
+  margin: 0;
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-card);
+  background: rgba(251, 191, 36, .12);
+  border: var(--border-w) solid rgba(251, 191, 36, .32);
+  color: var(--warn-text);
+  font-size: var(--font-caption);
+  font-weight: 600;
+}
+
+.previewNote code {
+  font-family: var(--mono);
+  font-size: var(--font-cap);
+}
+
+/* ── 지금 하실 일 띠 ──────────────────────────────
+
+   이 화면을 여는 이유가 "뭘 해야 하지" 하나라, 제일 급한 것 **하나만** 크게
+   둔다. 여러 지원을 가로질러 고른다. */
+.bar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+  flex-wrap: wrap;
+  padding: var(--sp-4) var(--sp-5);
+  border: var(--border-w) solid rgba(34, 211, 238, .35);
+  border-radius: 8px;
+  background: linear-gradient(100deg, rgba(34, 211, 238, .14), rgba(34, 211, 238, .03) 60%);
+}
+
+/* 할 일이 없는 날 — **대부분의 날이 그렇다.** 시안색을 빼고 조용하게 */
+.barCalm {
+  border-color: var(--border);
+  background: var(--bg-elev);
+}
+
+.barKicker {
+  display: block;
+  font-size: var(--font-cap);
+  letter-spacing: var(--ls-cap);
+  text-transform: uppercase;
+  font-weight: 700;
   color: var(--accent-text);
 }
 
+.barCalm .barKicker {
+  color: var(--text-sub);
+}
+
+.barText {
+  flex: 1;
+  min-width: 240px;
+}
+
+.barTitle {
+  margin: var(--sp-1) 0 0;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--text);
+  word-break: keep-all;
+}
+
+.barWhere {
+  margin: 2px 0 0;
+  font-size: var(--font-caption);
+  color: var(--text-sub);
+  word-break: keep-all;
+}
+
+/* 남은 날. **평소에는 색이 없다** — 늘 노랗게 두면 색이 뜻을 잃는다.
+   사흘 아래부터 .dueNear 가 붙는다 */
+.due {
+  font-size: var(--font-caption);
+  font-family: var(--mono);
+  color: var(--text-sub);
+  white-space: nowrap;
+}
+
+.dueNear {
+  color: var(--warn-text);
+}
+
+.cta {
+  height: 40px;
+  padding: 0 var(--sp-5);
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--r-ctl);
+  background: var(--accent-fill);
+  color: var(--on-accent);
+  font-size: var(--font-sm);
+  font-weight: 700;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: background var(--dur-fast) var(--ease);
+}
+
+.cta:hover {
+  background: var(--accent-fill-hover);
+}
+
+/* ── 2단: 왼쪽 내 지원, 오른쪽 여정 ───────────────── */
+.cols {
+  display: grid;
+  /* 왼쪽만 고정, 오른쪽은 남는 폭을 다 쓴다 — 담당자 화면들과 같다.
+     상한을 두면 넓은 모니터에서 오른쪽이 통째로 빈다 */
+  grid-template-columns: 300px minmax(0, 1fr);
+  gap: var(--sp-5);
+  align-items: start;
+}
+
+.rail {
+  min-width: 0;
+}
+
+/* **여기는 공고 목록이 아니라 내가 낸 것들이다.** 공고 제목만 늘어놓으면
+   채용 사이트의 공고 목록처럼 읽힌다 — 그래서 줄마다 낸 날짜를 붙이고
+   진행 중과 끝난 것을 묶어 나눈다. */
+.railHead {
+  margin: 0 0 var(--sp-3);
+  padding-left: var(--sp-1);
+  font-size: var(--font-cap);
+  letter-spacing: var(--ls-cap);
+  text-transform: uppercase;
+  color: var(--text-sub);
+  font-weight: 600;
+}
+
+.railGroup {
+  margin: var(--sp-4) 0 var(--sp-2);
+  padding-left: var(--sp-1);
+  font-size: var(--font-cap);
+  color: var(--text-sub);
+  font-weight: 600;
+}
+
+.railGroup:first-of-type {
+  margin-top: 0;
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.item {
+  display: block;
+  width: 100%;
+  padding: var(--sp-3) var(--sp-4);
+  border: var(--border-w) solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elev);
+  color: inherit;
+  font-family: var(--sans);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease);
+}
+
+.item:hover {
+  background: rgba(255, 255, 255, .05);
+}
+
+.itemOn {
+  border-color: rgba(34, 211, 238, .45);
+  background: rgba(34, 211, 238, .10);
+}
+
+/* 끝난 것은 흐리다 — 지우지 않는 이유는, 없애면 "완료"와 "아직 안 잡힘"이
+   같아지기 때문이다 */
+.itemQuiet {
+  opacity: .62;
+}
+
+.itemQuiet:hover {
+  opacity: 1;
+}
+
+.itemTop {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.itemName {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-caption);
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.count {
+  flex: none;
+  height: 18px;
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: var(--r-pill);
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 10px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.itemStage {
+  display: block;
+  margin: 2px 0 0;
+  font-size: var(--font-cap);
+  color: var(--text-sub);
+}
+
+.itemOn .itemStage {
+  color: var(--accent-text);
+}
+
+/* 낸 날짜. 이 줄 하나가 "내가 낸 것"과 "떠 있는 공고"를 가른다 */
+.itemWhen {
+  display: block;
+  margin-bottom: var(--sp-2);
+  font-size: var(--font-cap);
+  color: var(--text-sub);
+  font-family: var(--mono);
+}
+
+/* 진행 바를 3px 막대 넷으로 줄인 것 — 줄 하나에 들어가야 한다 */
+.mini {
+  display: flex;
+  gap: 3px;
+}
+
+.miniStep {
+  flex: 1;
+  height: 3px;
+  border-radius: 2px;
+  background: #232B3D;
+}
+
+/* 지나온 칸은 램프를 쓴다 (05-design §1 --stage-1~4) */
+.miniS1 { background: var(--stage-1); }
+.miniS2 { background: var(--stage-2); }
+.miniS3 { background: var(--stage-3); }
+.miniCur { background: var(--accent); box-shadow: var(--sh-glow); }
+.miniWin { background: var(--ok); }
+
+/* 종료는 램프 밖이다 — 진행이 아니라 멈춤이라 무채색을 쓴다.
+   **빨간색을 쓰지 않는다**: 서버가 rejected 를 "불합격"이 아니라 "전형 종료"로
+   내리기로 한 것과 같은 이유다(app/shared/labels.py) */
+.miniStop { background: #4A5568; }
+
+/* ── 오른쪽: 여정 ────────────────────────────────── */
+.detail {
+  border: var(--border-w) solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elev);
+  box-shadow: var(--sh-card);
+  overflow: hidden;
+  min-width: 0;
+}
+
+.detailHead {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-4) var(--sp-5);
+  border-bottom: var(--border-w) solid var(--border-soft);
+  flex-wrap: wrap;
+}
+
+.detailTitle {
+  margin: 0;
+  font-size: var(--font-h2);
+  font-weight: 700;
+  color: var(--text);
+  word-break: keep-all;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 var(--sp-3);
+  border-radius: var(--r-pill);
+  font-size: var(--font-cap);
+  font-weight: 700;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  border: var(--border-w) solid rgba(34, 211, 238, .3);
+  white-space: nowrap;
+}
+
+.pillWin {
+  background: var(--ok-soft);
+  color: var(--ok-text);
+  border-color: rgba(52, 211, 153, .32);
+}
+
+.pillEnd {
+  background: var(--bg-sunken);
+  color: var(--text-sub);
+  border-color: var(--border-soft);
+}
+
+.when {
+  font-size: var(--font-cap);
+  color: var(--text-sub);
+  font-family: var(--mono);
+  white-space: nowrap;
+}
+
+.journey {
+  padding: var(--sp-5);
+}
+
+.leg {
+  display: grid;
+  grid-template-columns: 18px 1fr;
+  gap: var(--sp-4);
+}
+
+.legRail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.node {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  margin-top: 4px;
+  border-radius: 50%;
+  background: var(--bg);
+  border: 2px solid #232B3D;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 8px;
+  color: transparent;
+}
+
+.wire {
+  flex: 1;
+  width: 2px;
+  min-height: 16px;
+  margin-top: 4px;
+  background: #232B3D;
+}
+
+.legPast .node {
+  border-color: var(--stage-3);
+  background: var(--stage-3);
+  color: var(--bg);
+}
+
+.legPast .wire {
+  background: var(--stage-3);
+}
+
+.legHere .node {
+  border-color: var(--accent);
+  background: rgba(34, 211, 238, .25);
+  box-shadow: var(--sh-glow);
+}
+
+.legHere .node::after {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.legWin .node {
+  border-color: var(--ok);
+  background: var(--ok);
+  color: var(--bg);
+}
+
+.legStop .node {
+  border-color: #4A5568;
+  background: #4A5568;
+  color: var(--bg);
+}
+
+.legBody {
+  padding-bottom: var(--sp-5);
+  min-width: 0;
+}
+
+.leg:last-child .legBody {
+  padding-bottom: 0;
+}
+
+.legRow {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+}
+
+/* 아직 안 온 단계만 흐리다. 지나온 단계는 읽혀야 한다 */
+.legName {
+  font-size: var(--font-sm);
+  font-weight: 600;
+  color: rgba(154, 167, 192, .6);
+}
+
+.legPast .legName,
+.legStop .legName {
+  color: var(--text-sub);
+}
+
+.legHere .legName {
+  color: var(--accent-text);
+}
+
+.legWin .legName {
+  color: var(--ok-text);
+}
+
+.legNote {
+  font-size: var(--font-cap);
+  color: var(--text-sub);
+  word-break: keep-all;
+}
+
+/* ── 단계에 매달린 할 일 ──────────────────────────
+
+   `라벨 · 상태 · 마감 · 버튼` 네 칸으로 **가로에 눕는다** — 세로로 쌓으면 한
+   줄이 길어지고 버튼이 칸마다 다른 자리에 선다. */
+.task {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  margin-top: var(--sp-2);
+  padding: var(--sp-3) var(--sp-4);
+  border: var(--border-w) solid var(--border-soft);
+  border-radius: var(--r-card);
+  background: rgba(255, 255, 255, .03);
+  color: inherit;
+  text-decoration: none;
+}
+
+/* 지금 해야 하는 줄만 테두리가 산다 */
+.taskLive {
+  border-color: rgba(34, 211, 238, .35);
+  background: rgba(34, 211, 238, .07);
+}
+
+a.task:hover {
+  background: rgba(255, 255, 255, .07);
+}
+
+a.task:focus-visible {
+  outline: none;
+  border-color: rgba(255, 255, 255, .5);
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, .12);
+}
+
+/* 라벨 폭을 고정해 **셋의 상태 글자가 같은 x 에서 시작**한다 (05-design §3) */
+.taskName {
+  flex: none;
+  width: 96px;
+  font-size: var(--font-caption);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.taskState {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-caption);
+  color: var(--text-sub);
+  word-break: keep-all;
+}
+
+.stateTodo {
+  color: var(--accent-text);
+}
+
+.stateDone {
+  color: var(--ok-text);
+}
+
+.taskDue {
+  flex: none;
+  font-size: var(--font-cap);
+  font-family: var(--mono);
+  color: var(--text-sub);
+  white-space: nowrap;
+}
+
+/* 버튼처럼 보이지만 버튼이 아니다 — 누르는 것은 줄 전체다. 그래서 <span> 이고,
+   링크 안에 링크를 넣지 않는다 */
+.go {
+  flex: none;
+  height: 30px;
+  padding: 0 var(--sp-3);
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--r-ctl);
+  font-size: var(--font-cap);
+  font-weight: 700;
+  white-space: nowrap;
+  background: var(--bg-sunken);
+  border: var(--border-w) solid var(--border);
+  color: var(--text);
+}
+
+/* 지금 할 일만 채운다 — 눈에 먼저 들어야 한다 */
+.goStrong {
+  background: var(--accent-fill);
+  border-color: transparent;
+  color: var(--on-accent);
+  text-shadow: var(--ts-onfill);
+}
+
+/* 갈 곳이 없는 줄의 자리. 버튼과 같은 폭을 먹어 줄들이 안 어긋난다 */
+.tick {
+  flex: none;
+  width: 30px;
+  text-align: center;
+  font-size: var(--font-caption);
+  color: var(--text-sub);
+}
+
+/* ── 설정 덮개 ───────────────────────────────────
+
+   지원자 화면에는 메뉴가 없어서 설정으로 갔다가 돌아올 길을 따로 만들어야
+   한다. 덮으면 닫기만 하면 제자리다. */
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--sp-5);
+  background: var(--scrim);
+  backdrop-filter: blur(2px);
+}
+
+.sheet {
+  width: 100%;
+  max-width: 440px;
+  max-height: calc(100vh - var(--sp-8));
+  display: flex;
+  flex-direction: column;
+  border: var(--border-w) solid var(--border);
+  border-radius: 10px;
+  background: #10182A;
+  box-shadow: var(--sh-overlay);
+  overflow: hidden;
+}
+
+.sheetHead {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-4) var(--sp-5);
+  border-bottom: var(--border-w) solid var(--border-soft);
+}
+
+.sheetTitle {
+  margin: 0;
+  font-size: var(--font-h2);
+  font-weight: 700;
+  color: var(--text);
+}
+
+.x {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: var(--r-ctl);
+  background: none;
+  color: var(--text-sub);
+  font-family: var(--sans);
+  font-size: var(--font-sm);
+  cursor: pointer;
+}
+
+.x:hover {
+  background: var(--bg-sunken);
+  color: var(--text);
+}
+
+.sheetBody {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--sp-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-5);
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.sectionName {
+  margin: 0;
+  font-size: var(--font-cap);
+  letter-spacing: var(--ls-cap);
+  text-transform: uppercase;
+  font-weight: 600;
+  color: var(--text-sub);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.hint {
+  margin: 0;
+  font-size: var(--font-caption);
+  color: var(--text-sub);
+  word-break: keep-all;
+}
+
+.hint strong {
+  color: var(--text);
+}
+
+/* 읽기 전용 칸은 눌러도 되는 것처럼 보이면 안 된다 */
+.input[readonly] {
+  background: var(--bg-sunken);
+  color: var(--text-sub);
+  cursor: default;
+}
+
+.wideBtn {
+  width: 100%;
+  height: 44px;
+  border: var(--border-w) solid var(--border);
+  border-radius: var(--r-ctl);
+  background: var(--bg-sunken);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: var(--font-sm);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease);
+}
+
+.wideBtn:hover:not(:disabled) {
+  background: var(--sunken-hover);
+}
+
+/* 아직 안 되는 것. **이유는 위 hint 가 글자로 말한다** — 흐린 버튼만
+   두면 고장인지 아직인지 구별이 안 된다 */
+.wideBtn:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
+
+/* 나가는 것. 빨간 테두리를 두르지 않는다 — 로그아웃은 되돌릴 수 있는 일이라
+   삭제와 같은 무게를 줄 이유가 없다(05-design §1 색은 판단에만) */
+.leave {
+  color: var(--text-sub);
+}
+
+.leave:hover {
+  color: var(--text);
+}
+
+/* ── 로그인·빈 상태에서 쓰는 것 ─────────────────── */
 .card {
   background: var(--bg-elev);
   backdrop-filter: var(--glass);
@@ -52,6 +1009,13 @@
   word-break: keep-all;
 }
 
+.emptyBig {
+  margin: 0;
+  font-size: var(--font-body);
+  font-weight: 600;
+  color: var(--text);
+}
+
 .help {
   font-size: var(--font-sm);
   color: var(--text-sub);
@@ -64,157 +1028,111 @@
   font-size: var(--font-caption);
   font-weight: 600;
   color: var(--text-sub);
-  margin-bottom: calc(var(--sp-2) * -1 + 2px);
+  margin: 0;
 }
 
 .input {
   width: 100%;
-  box-sizing: border-box;
-  /* 폰에서 누르기 좋은 높이 (05-design §9 터치 44px) */
-  min-height: 44px;
-  padding: var(--sp-3);
+  height: 44px;
+  padding: 0 var(--sp-3);
   border: var(--border-w) solid var(--border);
   border-radius: var(--r-ctl);
-  background: var(--bg-sunken);
-  /* **16px 아래로 내리지 않는다** — iOS 사파리가 그보다 작은 입력칸에
-     자동으로 화면을 확대해서, 폰에서 화면이 튄다. */
-  font-size: 16px;
+  background: rgba(255, 255, 255, .05);
   color: var(--text);
-  font-family: inherit;
-  transition: border-color var(--dur-fast) var(--ease);
-}
-
-.input:focus-visible {
-  outline: 2px solid var(--accent-text);
-  outline-offset: 1px;
-  border-color: var(--accent-text);
-  background: var(--bg-elev);
+  font-family: var(--sans);
+  font-size: var(--font-body);
 }
 
 .input::placeholder {
-  color: var(--text-sub);
+  color: rgba(230, 236, 250, .42);
 }
 
+.input:focus-visible {
+  outline: none;
+  border-color: rgba(255, 255, 255, .5);
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, .12);
+}
+
+/* 로그인 실패 문구. --danger 는 §1 확정 토큰 */
 .error {
+  margin: 0;
   font-size: var(--font-sm);
   color: var(--danger);
-  margin: 0;
   word-break: keep-all;
 }
 
 .foot {
+  margin: 0;
   font-size: var(--font-caption);
   color: var(--text-sub);
-  margin: 0;
   text-align: center;
 }
 
 .link {
-  background: none;
-  border: none;
-  padding: var(--sp-2);
-  font-size: var(--font-caption);
-  color: var(--text-sub);
-  text-decoration: underline;
-  cursor: pointer;
-  font-family: inherit;
-  align-self: center;
+  color: var(--accent-text);
+  text-decoration: none;
+  border-bottom: var(--border-w) solid rgba(125, 211, 252, .35);
 }
 
 .link:hover {
-  color: var(--text);
-}
-
-.link:focus-visible {
-  outline: 2px solid var(--accent-text);
-  outline-offset: 2px;
-  border-radius: var(--r-ctl);
-}
-
-/* 지원 한 건 */
-.posting {
-  font-size: var(--font-sm);
-  color: var(--text-sub);
-  margin: 0;
-  word-break: keep-all;
-}
-
-/* 단계. **서버가 준 문구를 그대로 쓴다** — 화면에서 "불합격" 같은 말을
-   만들지 않는다(ADR-0031·portal 과 같은 규칙). 색으로도 판정하지 않는다:
-   초록/빨강을 칠하면 문구가 안 말한 것을 색이 말하게 된다. */
-.stage {
-  font-size: var(--font-h2);
-  font-weight: 700;
-  color: var(--text);
-  margin: 0;
-  word-break: keep-all;
-}
-
-.applied {
-  font-size: var(--font-caption);
-  color: var(--text-sub);
-  margin: 0;
+  border-bottom-color: var(--accent-text);
 }
 
 .skeleton {
-  height: 20px;
-  border-radius: var(--r-ctl);
+  height: 14px;
+  border-radius: var(--r-pill);
   background: var(--bg-sunken);
-  animation: pulse var(--dur-slow) var(--ease) infinite alternate;
 }
 
-@keyframes pulse {
-  from { opacity: 1; }
-  to { opacity: 0.55; }
+/* ── 좁으면 예전 배치로 ──────────────────────────
+
+   900px 은 이 화면이 쓰는 유일한 경계다. 05-design §9 의 세 값(1100/768/1280)과
+   다른 이유: 여기서 접히는 것은 **2단**이고, 오른쪽 여정이 버티는 한계가 그
+   값들과 안 맞는다 — 왼쪽 260px 를 빼고 나면 할 일 줄의 상태 글자가 두 줄로
+   접힌다. 재 보고 정한 값이다. */
+@media (max-width: 900px) {
+  .cols {
+    grid-template-columns: 1fr;
+  }
+
+  .wide {
+    padding: var(--sp-4) var(--sp-4) var(--sp-7);
+  }
+
+  /* 줄이 좁아지면 라벨 폭 고정을 푼다 — 안 풀면 상태 글자가 잘린다 */
+  .task {
+    flex-wrap: wrap;
+    gap: var(--sp-2) var(--sp-3);
+  }
+
+  .taskName {
+    width: auto;
+    flex: 1 0 100%;
+  }
+
+  .taskState {
+    flex: 1 0 auto;
+  }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .skeleton { animation: none; }
-}
+@media (max-width: 560px) {
+  .topbar {
+    padding: 0 var(--sp-4);
+    gap: var(--sp-3);
+  }
 
-/* 면접 입장. 카드 안에서 한 칸 띄워 "지원 현황"과 "지금 할 일"을 가른다. */
-.interview {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-2);
-  margin-top: var(--sp-2);
-  padding-top: var(--sp-3);
-  border-top: var(--border-w) solid var(--border);
-}
+  /* 좁으면 화면 이름을 접는다 — 로고와 계정이 먼저다 */
+  .divider,
+  .where {
+    display: none;
+  }
 
-/* 폰에서 누르기 좋게 (05-design §9 터치 44px). 링크지만 버튼처럼 쓴다. */
-.interview :global(.btn) {
-  min-height: 44px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  text-decoration: none;
-}
+  /* 이름도 접는다. 아바타만으로도 자기 계정인 것은 읽힌다 */
+  .tname {
+    display: none;
+  }
 
-/* 면접 입장. 카드 안에서 한 칸 띄워 "지원 현황"과 "지금 할 일"을 가른다. */
-.interview {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-2);
-  margin-top: var(--sp-2);
-  padding-top: var(--sp-3);
-  border-top: var(--border-w) solid var(--border);
-}
-
-/* 폰에서 누르기 좋게 (05-design §9 터치 44px). 링크지만 버튼처럼 쓴다. */
-.interview :global(.btn) {
-  min-height: 44px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  text-decoration: none;
-}
-
-/* 끝난 면접 한 줄 (2026-09-09). **버튼이 아니다** — 눌러도 막히는 문을
-   그리지 않는다. 그래도 줄을 남기는 이유는, 없애 버리면 방금 면접을 마친
-   사람의 화면에서 면접이 통째로 사라져 "완료"와 "아직 안 잡힘"이 같아져서다. */
-.doneLine {
-  margin: 0;
-  font-size: var(--font-sm);
-  color: var(--ok-text);
+  .journey {
+    padding: var(--sp-4);
+  }
 }

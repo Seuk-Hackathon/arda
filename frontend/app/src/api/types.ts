@@ -515,6 +515,14 @@ export interface MyInterview {
   expires_at: string | null
 }
 
+/* 인적성·일정이 쓰는 모양. 면접(MyInterview)과 구조가 같다 —
+   서버도 같은 이유로 하나(MyTokenLinkOut)로 쓴다. */
+export interface MyTokenLink {
+  token: string
+  status: string
+  expires_at: string | null
+}
+
 /* 지원자가 보는 자기 지원 한 건.
    **단계는 내부값이 아니라 사람이 읽을 말(`stage_label`)로만 온다** —
    `rejected` 를 "불합격"으로 앞질러 말하지 않기 위해서다. */
@@ -523,7 +531,13 @@ export interface MyApplication {
   posting_title: string
   stage_label: string
   applied_at: string
+  /* 지금 들어갈 수 있는 것들. 없으면 빈 목록이다.
+     **만료된 것은 서버가 빼고 내린다** — 지원자가 놓친 것이라 띄워도 할 수
+     있는 일이 없다. 끝난 것(done)은 싣는다: 없애면 "완료"와 "아직 안 잡힘"이
+     같은 화면이 된다(app/talent/api/applicant_auth.py 의 같은 주석). */
   interviews: MyInterview[]
+  aptitudes: MyTokenLink[]
+  schedules: MyTokenLink[]
 }
 
 export interface ApplicantMe {
