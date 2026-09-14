@@ -60,15 +60,20 @@ def _render_assistant(content: Any) -> str:
     return "\n".join(p for p in parts if p)
 
 
-def format_sample(sample: dict[str, Any], tokenizer) -> str:
-    """{messages, _meta} → tokenizer chat_template 적용된 문자열."""
-    rendered_messages = []
+def to_conversational(sample: dict[str, Any]) -> dict[str, Any]:
+    """{messages: [{role, content(list|str)}], _meta} → {messages: [{role, content: str}]}.
+
+    trl 0.29 의 `assistant_only_loss=True` 는 conversational 포맷 (messages 리스트에
+    role/content 문자열) 을 요구한다. 우리 원본은 assistant 를 list-of-blocks 로
+    쓰므로 여기서 문자열로 평탄화한다 — tool_use 블록은 Qwen3 스타일 `<tool_call>`
+    XML 로 되돌린다. trainer 안에서 chat_template 이 다시 적용되고 assistant 표식
+    사이만 손실 대상으로 잡힌다.
+    """
+    out_messages = []
     for m in sample["messages"]:
         content = _render_assistant(m["content"]) if m["role"] == "assistant" else m["content"]
-        rendered_messages.append({"role": m["role"], "content": content})
-    return tokenizer.apply_chat_template(
-        rendered_messages, tokenize=False, add_generation_prompt=False,
-    )
+        out_messages.append({"role": m["role"], "content": content})
+    return {"messages": out_messages}
 
 
 def load_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -124,11 +129,11 @@ def main() -> int:
     val_raw = load_jsonl(val_path) if val_path.exists() else []
     print(f"[train] train={len(train_raw)} val={len(val_raw)}", file=sys.stderr)
 
-    train_texts = [format_sample(s, tokenizer) for s in train_raw]
-    val_texts = [format_sample(s, tokenizer) for s in val_raw] if val_raw else []
+    train_conv = [to_conversational(s) for s in train_raw]
+    val_conv = [to_conversational(s) for s in val_raw] if val_raw else []
 
-    train_ds = Dataset.from_dict({"text": train_texts})
-    val_ds = Dataset.from_dict({"text": val_texts}) if val_texts else None
+    train_ds = Dataset.from_list(train_conv)
+    val_ds = Dataset.from_list(val_conv) if val_conv else None
 
     args = SFTConfig(
         output_dir=str(OUTPUT_DIR),
@@ -147,9 +152,9 @@ def main() -> int:
         eval_strategy="epoch" if val_ds else "no",
         optim="paged_adamw_8bit",
         report_to="none",
-        # SFT 전용
+        # SFT 전용 · conversational 포맷 · dataset_text_field 는 지정하지 않음
+        # (trainer 가 messages 열을 chat_template 로 렌더한다).
         max_length=MAX_SEQ_LENGTH,
-        dataset_text_field="text",
         packing=False,
         # 2026-09-14: **assistant-only 손실** — 이전 학습은 손실이 전체 시퀀스에
         # 걸려 시스템 프롬프트 98.2% 를 함께 외웠다 (`eval_loss` 0.34→0.07 은
