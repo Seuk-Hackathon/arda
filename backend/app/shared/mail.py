@@ -332,10 +332,14 @@ def _get_dispatcher():
     """
     from app.adapter.outbound.mail import N8nMailDispatcher, SqsMailDispatcher
 
-    dispatch = os.getenv("MAIL_DISPATCH", "worker").strip().lower()
-    if dispatch == "n8n":
-        return N8nMailDispatcher()
-    return SqsMailDispatcher()
+    # 2026-09-14 default 를 `n8n` 으로 (ADR-0036). 프로덕션에는 이미 명시돼 있고,
+    # 로컬·테스트에서 unset 이었을 때 SQS 로 조용히 보내던 것을 막는다 — 워커가
+    # 없어졌으므로 그 경로로 실어 봐야 도착하지 않는다. `worker`·`sqs` 둘 다 SQS
+    # 어댑터로 보낸다 (테스트가 두 이름을 다 쓴다).
+    dispatch = os.getenv("MAIL_DISPATCH", "n8n").strip().lower()
+    if dispatch in {"worker", "sqs"}:
+        return SqsMailDispatcher()
+    return N8nMailDispatcher()
 
 
 def publish(email_log_id: int, *, dispatcher=None) -> None:
