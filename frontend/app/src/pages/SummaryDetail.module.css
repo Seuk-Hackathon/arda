@@ -425,8 +425,29 @@
   font-size: var(--font-sm);
   color: var(--accent-text);
   text-decoration: none;
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font-family: inherit;
 }
 .linkOut:hover { text-decoration: underline; }
+
+/* 자기소개서 원문 · 줄바꿈·공백을 그대로 보여준다 */
+.selfIntro {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+  font-size: var(--font-body);
+  line-height: 1.65;
+  color: var(--text);
+  background: var(--bg-sunken);
+  padding: var(--sp-3);
+  border-radius: var(--r-card);
+  margin: var(--sp-3) 0 0;
+  max-height: 480px;
+  overflow-y: auto;
+}
 
 @media (max-width: 720px) {
   .prosCons { grid-template-columns: 1fr; }

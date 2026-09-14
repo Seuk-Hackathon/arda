@@ -99,6 +99,20 @@ export default function Summary() {
 function PostingBlock({ posting }: { posting: SummaryPosting }) {
   const [expanded, setExpanded] = useState(true)
 
+  /* 2026-09-14: 점수가 높은 사람이 위로, 불합격은 맨 아래. 팀에서 "합격 후보를 먼저
+     본다" 는 요구에 맞춤. 정렬 키:
+       (1) rejected 는 뒤로 (current_stage === 'rejected' 또는 doc_decision === 'reject')
+       (2) final_score 내림차순 (null 은 부여 안 됨 · 뒤로)
+       (3) 이름 오름차순 (동점 안정 정렬) */
+  const sortedApplicants = [...posting.applicants].sort((x, y) => {
+    const rejX = x.current_stage === 'rejected' || x.doc_decision === 'reject' ? 1 : 0
+    const rejY = y.current_stage === 'rejected' || y.doc_decision === 'reject' ? 1 : 0
+    if (rejX !== rejY) return rejX - rejY
+    const scoreX = x.final_score ?? -1
+    const scoreY = y.final_score ?? -1
+    if (scoreX !== scoreY) return scoreY - scoreX
+    return x.name.localeCompare(y.name, 'ko')
+  })
   const graded = posting.applicants.filter((a) => a.final_score !== null).length
   const avgFinal = posting.applicants.length
     ? posting.applicants
@@ -148,7 +162,7 @@ function PostingBlock({ posting }: { posting: SummaryPosting }) {
               </tr>
             </thead>
             <tbody>
-              {posting.applicants.map((a) => (
+              {sortedApplicants.map((a) => (
                 <ApplicantRow key={a.id} applicant={a} />
               ))}
             </tbody>
