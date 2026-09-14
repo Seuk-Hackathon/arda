@@ -218,11 +218,19 @@ class TestPublishDispatch:
     로직만 검증하고, 실제 SQS/n8n 호출은 어댑터 전용 테스트에서.
     """
 
-    def test_worker_default_uses_sqs_dispatcher(self, monkeypatch):
+    def test_default_uses_n8n_dispatcher(self, monkeypatch):
+        # 2026-09-14: SQS 워커 폐기 후 default 를 n8n 으로 (ADR-0036).
+        from app.shared import mail
+        from app.adapter.outbound.mail import N8nMailDispatcher
+
+        monkeypatch.delenv("MAIL_DISPATCH", raising=False)
+        assert isinstance(mail._get_dispatcher(), N8nMailDispatcher)
+
+    def test_worker_env_uses_sqs_dispatcher(self, monkeypatch):
         from app.shared import mail
         from app.adapter.outbound.mail import SqsMailDispatcher
 
-        monkeypatch.delenv("MAIL_DISPATCH", raising=False)
+        monkeypatch.setenv("MAIL_DISPATCH", "worker")
         assert isinstance(mail._get_dispatcher(), SqsMailDispatcher)
 
     def test_n8n_env_uses_n8n_dispatcher(self, monkeypatch):
