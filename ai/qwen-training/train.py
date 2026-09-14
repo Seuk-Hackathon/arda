@@ -24,7 +24,7 @@ from transformers import (
     AutoTokenizer,
     BitsAndBytesConfig,
 )
-from trl import SFTConfig, SFTTrainer
+from trl import DataCollatorForCompletionOnlyLM, SFTConfig, SFTTrainer
 
 ROOT = Path(__file__).parent
 # ADR-0032 는 ollama `qwen3:8b` (Q4) 로 표기 · HF 상 대응은 `Qwen/Qwen3-8B` (Instruct 접미어 없음)
@@ -153,6 +153,19 @@ def main() -> int:
         packing=False,
     )
 
+    # 2026-09-14: **completion-only 손실** — 이전 학습은 손실이 전체 시퀀스에 걸려
+    # 시스템 프롬프트 98.2% 를 함께 외웠다 (`eval_loss` 0.34→0.07 은 프롬프트 암기의
+    # 결과였다). Qwen3 chat_template 은 assistant 턴을 `<|im_start|>assistant\n` 로
+    # 열므로 이 지점 앞을 -100 으로 마스킹해 손실 대상을 assistant 응답으로 좁힌다.
+    # 다중 턴 케이스는 첫 assistant 응답만 학습 대상이 되는데(총 데이터의 소수),
+    # 이 실험의 목표는 "손실을 좁혔을 때 tool_match 실패 17건이 줄어드는가" 를 재는
+    # 것이라 이 근사로 충분하다. 완전한 다중 턴 마스킹은 후속 반복에서.
+    response_template = "<|im_start|>assistant\n"
+    collator = DataCollatorForCompletionOnlyLM(
+        response_template=response_template,
+        tokenizer=tokenizer,
+    )
+
     trainer = SFTTrainer(
         model=model,
         args=args,
@@ -160,6 +173,7 @@ def main() -> int:
         eval_dataset=val_ds,
         processing_class=tokenizer,
         peft_config=lora_cfg,
+        data_collator=collator,
     )
 
     print("[train] 학습 시작", file=sys.stderr)
