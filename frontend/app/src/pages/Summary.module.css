@@ -164,6 +164,18 @@
   color: var(--text);
 }
 
+.nameLink {
+  font-weight: 600;
+  color: var(--text);
+  text-decoration: none;
+  cursor: pointer;
+  display: block;
+}
+.nameLink:hover {
+  color: var(--accent-text);
+  text-decoration: underline;
+}
+
 .email {
   font-size: var(--font-caption);
   color: var(--text-sub);
