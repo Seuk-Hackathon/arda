@@ -33,7 +33,7 @@ from app.models.constants import (
 # 컨텍스트별 엔티티 — SQLAlchemy Base 가 configure 되기 전에 모두 import 되도록
 # 여기서 한꺼번에 끌어들인다.
 from app.models.talent import User
-from app.models.hiring import JobPosting, PostingInterviewer, CompanyProfile, EmailTemplate, IntegrationClient
+from app.models.hiring import JobPosting, PostingInterviewer, CompanyProfile, EmailTemplate, IntegrationClient  # noqa: F401 — IntegrationClient 는 관계 그래프에 필요
 from app.models.application import Application, StageHistory, Evaluation, ApplicationNote, File, EmailLog, AptitudeSession, AptitudeAnswer
 from app.models.interview import InterviewerAssignment, InterviewerAvailability, ScheduleProposal, ScheduleSlot, InterviewSession, InterviewTurn, InterviewFinding
 from app.models.shared import AgentTrace, DocumentAnchor, ChainPublication
