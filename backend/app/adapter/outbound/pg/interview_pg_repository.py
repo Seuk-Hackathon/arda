@@ -28,3 +28,16 @@ class PgInterviewRepository(InterviewRepository):
             )
             .limit(1)
         )
+
+    def latest_ai_score_detail_for_application(self, application_id: int) -> dict | None:
+        return self._db.scalar(
+            select(InterviewSession.ai_score_detail)
+            .where(InterviewSession.application_id == application_id)
+            .where(InterviewSession.status == "done")
+            .where(InterviewSession.ai_score_detail.is_not(None))
+            .order_by(
+                InterviewSession.ended_at.desc().nulls_last(),
+                InterviewSession.id.desc(),
+            )
+            .limit(1)
+        )

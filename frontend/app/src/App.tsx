@@ -24,6 +24,7 @@ import PostingApplicants from './pages/PostingApplicants'
 import Applicants from './pages/Applicants'
 import Interviews from './pages/Interviews'
 import Evaluations from './pages/Evaluations'
+import Summary from './pages/Summary'
 import Settings from './pages/Settings'
 import More from './pages/More'
 /* three.js 를 초기 번들에서 빼기 위해 이 페이지도 지연 로드한다 (Sidebar 의 ArViewer 와 같은 청크) */
@@ -96,6 +97,7 @@ export default function App() {
             {/* 옛 경로. 북마크·메일 링크가 깨지지 않게 남긴다 */}
             <Route path="/interviews" element={<LegacyCalendarRedirect />} />
             <Route path="/evaluations" element={<Evaluations />} />
+            <Route path="/summary" element={<Summary />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="/more" element={<More />} />
           </Route>
