@@ -31,7 +31,12 @@ docker compose -p arda -f infra/docker-compose.prod.yml build >> "$LOG" 2>&1
 # 스키마 이행 (기동 전에) — 컬럼 추가/변경은 create_all 이 못 함. #17
 echo "$(date -Is) alembic upgrade..." >> "$LOG"
 docker compose -p arda -f infra/docker-compose.prod.yml run --rm api /app/.venv/bin/alembic upgrade head >> "$LOG" 2>&1
-docker compose -p arda -f infra/docker-compose.prod.yml up -d >> "$LOG" 2>&1
+# `--remove-orphans` — compose 에서 제거된 서비스의 컨테이너를 자동 정리 (2026-09-14).
+# 없으면 삭제된 서비스가 계속 살아 있다: 09-14 SQS 워커 폐기(#213) 후 이 스크립트가 자동
+# 배포는 했지만 arda-worker-1 이 그대로 남아 SQS 를 계속 폴링했다. 수동 `docker rm -f`
+# 필요했음. 이 옵션은 프로젝트 이름(`-p arda`) 에 속하지만 compose 파일에 없는 컨테이너만
+# 대상이라 수동 띄운 게 없는 우리 환경에서 안전.
+docker compose -p arda -f infra/docker-compose.prod.yml up -d --remove-orphans >> "$LOG" 2>&1
 # 헬스는 최대 60초 재시도 — 10초 한 번은 api 가 뜨는 중이라 가짜 WARN 이 났다
 # (09-09 15:12Z a6cb5c3: 컨테이너는 다 떴는데 "health check 실패" 로 기록됨).
 HEALTHY=0
