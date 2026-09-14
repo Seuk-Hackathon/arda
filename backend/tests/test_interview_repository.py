@@ -24,9 +24,14 @@ class TestInterviewRepositoryContract:
                 return None
 
         with pytest.raises(TypeError):
-            Half()  # latest_ai_score_for_application 없음
+            Half()  # 나머지 추상 메서드가 없다
 
     def test_full_impl_works(self):
+        """**포트에 메서드가 늘면 여기도 같이 는다.** 이 테스트가 빨개지는 것이
+        곧 "구현체를 안 고쳤다"는 신호다 — 2026-09-14 에 실제로 그랬다
+        (latest_ai_score_detail_for_application 추가, 여기 누락).
+        """
+
         class Full(InterviewRepository):
             def get_session(self, session_id):
                 return None
@@ -34,7 +39,12 @@ class TestInterviewRepositoryContract:
             def latest_ai_score_for_application(self, application_id):
                 return None
 
-        assert Full().latest_ai_score_for_application(1) is None
+            def latest_ai_score_detail_for_application(self, application_id):
+                return None
+
+        full = Full()
+        assert full.latest_ai_score_for_application(1) is None
+        assert full.latest_ai_score_detail_for_application(1) is None
 
 
 class TestLatestInterviewScoreWithMockRepo:
