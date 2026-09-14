@@ -9,7 +9,9 @@ import RequireAuth from './auth/RequireAuth'
 import Login from './pages/Login'
 import Apply from './pages/Apply'
 import Schedule from './pages/Schedule'
-import Interview from './pages/Interview'
+// Interview 컴포넌트는 옛 파일 업로드 흐름 (`./pages/Interview.tsx`).
+// 2026-09-14 부터 `/interview/:token` 라우트는 `InterviewAi` 를 씀. Interview.tsx
+// 파일은 남겨 두었지만 (텍스트 fallback 검토용) import 는 뺐다 — TS 미사용 에러 방지.
 import InterviewRoom from './pages/InterviewRoom'
 import InterviewLive from './pages/InterviewLive'
 import InterviewAi from './pages/InterviewAi'
