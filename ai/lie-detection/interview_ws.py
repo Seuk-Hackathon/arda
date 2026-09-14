@@ -697,6 +697,14 @@ def score(pcm: bytes, rows: list, seconds: float, latest_frame=None) -> dict:
         except Exception:
             logger.exception("deception_vit 추론 실패 — 판정은 그대로 낸다")
 
+    # Whisper 참/거짓: 담당자 참고 지표. 실패해도 판정은 그대로 낸다.
+    deception_audio: dict | None = None
+    try:
+        import deception_whisper
+        deception_audio = deception_whisper.predict(pcm)
+    except Exception:
+        logger.exception("deception_whisper 추론 실패 — 판정은 그대로 낸다")
+
     out = {
         "ok": True,
         "pred": int(m.predict(feat)[0]),
@@ -709,6 +717,8 @@ def score(pcm: bytes, rows: list, seconds: float, latest_frame=None) -> dict:
         out["expressions"] = expressions
     if deception:
         out["deception_vit"] = deception
+    if deception_audio:
+        out["deception_whisper"] = deception_audio
     return out
 
 
