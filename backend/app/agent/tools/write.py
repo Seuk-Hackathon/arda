@@ -8,23 +8,24 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from fastapi import HTTPException, status as http
+from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
-from app import mail
+from app.shared import mail
 from app.models import (
     Application,
     InterviewerAssignment,
     InterviewerAvailability,
-    JobPosting,
     ScheduleProposal,
     ScheduleSlot,
     User,
 )
-from app.stage_service import apply_stage_change, publish_all, require_reason
-from app.stages import StageTransitionError
+from app.application.stage_service import apply_stage_change, publish_all, require_reason
+from app.application.stages import StageTransitionError
+from app.adapter.outbound.pg.application_pg_repository import PgApplicationRepository
+from app.adapter.outbound.pg.hiring_pg_repository import PgHiringRepository
 
 # 확인 게이트를 타는 도구. **부수효과가 있는 것만 넣는다.**
 # draft_email 은 초안 텍스트만 돌려주고 아무것도 바꾸지 않아서 뺐다 — 초안 하나
@@ -38,7 +39,7 @@ WRITE_TOOL_NAMES = frozenset({
 def change_stage(db: Session, user: User, params: dict) -> dict:
     """단계 변경 + 이력 기록 + 메일 큐 발행.
 
-    **부수효과는 REST 와 같은 함수를 쓴다** (`app/stage_service.py`, #148). 전에는
+    **부수효과는 REST 와 같은 함수를 쓴다** (`app/application/stage_service.py`, #148). 전에는
     여기서 `email_logs` 행을 직접 만들고 SQS 발행을 하지 않아, 에이전트로 단계를
     바꾸면 메일이 영영 나가지 않는데 응답은 `mail_queued: true` 였다. 불합격
     사유(D8)도 남지 않았다. 규칙만 공유하고 순서를 따로 쓰면 이렇게 갈린다.
@@ -47,7 +48,7 @@ def change_stage(db: Session, user: User, params: dict) -> dict:
     to_stage = params["to_stage"]
     reason = params.get("reason")
 
-    app = db.get(Application, application_id)
+    app = PgApplicationRepository(db).get(application_id)
     if app is None:
         return {"error": f"지원자 {application_id}를 찾을 수 없습니다"}
 
@@ -89,7 +90,7 @@ def assign_interviewer(db: Session, user: User, params: dict) -> dict:
     if isinstance(interviewer_ids, int):
         interviewer_ids = [interviewer_ids]
 
-    if db.get(Application, application_id) is None:
+    if PgApplicationRepository(db).get(application_id) is None:
         return {"error": f"지원자 {application_id}를 찾을 수 없습니다"}
 
     # 역할 검사는 없다 — 누구나 면접관으로 배정될 수 있다 (ADR-0017).
@@ -123,8 +124,13 @@ def create_schedule_proposal(db: Session, user: User, params: dict) -> dict:
     import logging
     import secrets
 
-    from app import mail
-    from app.api.schedules import _build_candidates
+    from app.shared import mail
+
+    # `build_candidates` 는 서비스(`app/interview/schedule_service.py`) 에 있다.
+    # 여기서는 #198 이전 이름(`schedules._build_candidates`) 을 그대로 부르고 있어서
+    # **이 도구를 쓰면 ImportError 로 터졌다** — 아르의 "일정 제안 만들기" 경로를
+    # 타는 테스트가 없어 CI 가 잡지 못했다 (2026-09-12 감사에서 발견).
+    from app.interview.schedule_service import build_candidates
 
     logger = logging.getLogger(__name__)
 
@@ -132,7 +138,7 @@ def create_schedule_proposal(db: Session, user: User, params: dict) -> dict:
     slot_minutes = int(params.get("slot_minutes", 60))
     max_slots = int(params.get("max_slots", 5))
 
-    app = db.get(Application, application_id)
+    app = PgApplicationRepository(db).get(application_id)
     if app is None:
         return {"error": f"지원자 {application_id}를 찾을 수 없습니다"}
 
@@ -167,7 +173,7 @@ def create_schedule_proposal(db: Session, user: User, params: dict) -> dict:
     for iid, s, e in rows:
         confirmed.setdefault(iid, []).append((s, e))
 
-    candidates = _build_candidates(windows, confirmed, slot_minutes, max_slots, now)
+    candidates = build_candidates(windows, confirmed, slot_minutes, max_slots, now)
     if not candidates:
         return {"error": "생성 가능한 후보 슬롯이 없습니다 — 면접관 가용 시간을 확인하세요"}
 
@@ -242,7 +248,7 @@ def create_schedule_proposal(db: Session, user: User, params: dict) -> dict:
 
 
 def _posting_title(db: Session, app: Application) -> str:
-    posting = db.get(JobPosting, app.job_posting_id)
+    posting = PgHiringRepository(db).get_posting(app.job_posting_id)
     return posting.title if posting else ""
 
 
@@ -268,7 +274,7 @@ def draft_email(db: Session, user: User, params: dict) -> dict:
     application_id = int(params["application_id"])
     purpose = params.get("purpose", "general")
 
-    app = db.get(Application, application_id)
+    app = PgApplicationRepository(db).get(application_id)
     if app is None:
         return {"error": f"지원자 {application_id}를 찾을 수 없습니다"}
 
@@ -315,7 +321,7 @@ def send_email(db: Session, user: User, params: dict) -> dict:
     subject = (params.get("subject") or "").strip()
     body = (params.get("body") or "").strip()
 
-    app = db.get(Application, application_id)
+    app = PgApplicationRepository(db).get(application_id)
     if app is None:
         return {"error": f"지원자 {application_id}를 찾을 수 없습니다"}
     if not subject or not body:

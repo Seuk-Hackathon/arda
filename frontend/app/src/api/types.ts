@@ -513,3 +513,28 @@ export interface ApplicantMe {
   name: string
   applications: MyApplication[]
 }
+
+
+/* ── 종합 평가 (2026-09-14) ─────────────────────────────────── */
+export interface SummaryApplicant {
+  id: number
+  name: string
+  email: string
+  current_stage: string
+  ai_summary: string | null
+  doc_score: number | null
+  doc_decision: string | null
+  interview_ai_score: number | null
+  final_score: number | null
+  grade: string | null
+  concerns: string[]
+  strengths: string[]
+}
+
+export interface SummaryPosting {
+  id: number
+  title: string
+  status: string
+  applicant_count: number
+  applicants: SummaryApplicant[]
+}

@@ -11,14 +11,13 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import screening
+from app.application import screening
 from app.models import (
     Application,
     AptitudeSession,
     EmailLog,
     InterviewerAssignment,
     InterviewerAvailability,
-    JobPosting,
     PostingInterviewer,
     ScheduleProposal,
     StageHistory,

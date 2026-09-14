@@ -13,6 +13,7 @@ import type {
   SearchResult,
   StageChangeOut,
   Stage,
+  SummaryPosting,
   TokenResponse,
   User,
   UserItem,
@@ -122,6 +123,13 @@ export const applications = {
   },
 }
 
+export const summary = {
+  /* 종합 평가 (2026-09-14): 공고별 지원자 · 서류 + 면접 자동 점수 · 등급 · 요약.
+     상세와 달리 대시보드성 · 한 번에 모든 공고 아래 지원자를 준다. */
+  list: (signal?: AbortSignal) =>
+    api.get<SummaryPosting[]>('/summary', { signal }),
+}
+
 export const schedules = {
   /* 확정된 면접 목록. 면접관 계정은 서버가 본인 건만 준다 (A3) */
   interviews: (
@@ -228,6 +236,17 @@ export const agent = {
       '/agent/confirm',
       { tool_name, arguments: args } satisfies AgentConfirmRequest,
       { signal },
+    ),
+
+  /* AI 요약 재생성 (M2). 기존 요약을 덮어쓴다 — 몇 초 걸리는 LLM 호출이다.
+     실패 사유가 갈린다: **503** 은 백엔드(키·모델) 문제, **422** 는 응답을 못 읽은
+     것. 화면이 둘을 구분해 말해야 담당자가 "내 탓인가" 를 묻지 않는다.
+     (2026-09-12: 화면의 "다시 생성" 버튼에 핸들러가 없어 요청이 아예 나가지
+     않았다 — 서버 로그에 호출 0건이었다.) */
+  regenerateSummary: (applicationId: number) =>
+    api.post<{ summary: string; model: string | null }>(
+      `/agent/applications/${applicationId}/summarize`,
+      {},
     ),
 }
 

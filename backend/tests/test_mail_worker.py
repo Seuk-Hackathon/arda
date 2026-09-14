@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import pytest
 
-from app import mail, worker
-from app.models import EmailLog, User
+from app.shared import mail, worker
+from app.models import EmailLog
 
 
 class TestFill:

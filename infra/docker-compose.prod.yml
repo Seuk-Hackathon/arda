@@ -48,15 +48,10 @@ services:
       db:
         condition: service_healthy
 
-  worker:
-    build: ../backend
-    env_file: ../backend/.env
-    command: /app/.venv/bin/python -m app.worker
-    restart: unless-stopped
-    logging: *default-logging
-    depends_on:
-      db:
-        condition: service_healthy
+  # SQS 워커 (`app/shared/worker.py`) 는 2026-09-14 에 폐기했다 — ADR-0036 참고.
+  # 발송 경로는 `MAIL_DISPATCH=n8n` 로 고정 (ADR-0031). 다시 SQS 로 돌릴 일이 생기면
+  # 이 자리에 워커 서비스를 되살리고 .env 의 `MAIL_DISPATCH` 를 `worker` 로 바꾼다.
+  # 그때 참고할 형태는 이 파일 git blame 의 09-14 폐기 커밋에 남아 있다.
 
   # 거짓말 탐지 (ai/lie-detection). 포트를 밖으로 열지 않는다 — Caddy 가 /ai/* 로만 넘긴다.
   # GPU 서버가 준비되면 이 서비스를 그쪽으로 옮긴다. 인터페이스(POST /analyze)가 같으므로

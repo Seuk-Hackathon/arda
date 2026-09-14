@@ -182,7 +182,7 @@ class TestPublicView:
         self, public, db: Session, application: Application, admin_user: User
     ):
         """지원자에게 필요한 건 자기 면접 상태뿐이다."""
-        s = _session(db, application, admin_user)
+        _session(db, application, admin_user)
         db.commit()
 
         body = public.get("/api/v1/public/interview/tok-test").json()
@@ -503,7 +503,7 @@ class TestFinish:
         self, public, db: Session, application: Application, admin_user: User
     ):
         """새로고침으로 500 을 만들지 않는다."""
-        s = _session(
+        _session(
             db,
             application,
             admin_user,
@@ -555,7 +555,7 @@ class TestAnswerAudio:
         self, public, db: Session, running
     ):
         with (
-            patch("app.s3.read_object", return_value=b"fake-audio"),
+            patch("app.shared.s3.read_object", return_value=b"fake-audio"),
             patch("app.agent.stt.transcribe", return_value=_stt_result()) as mock_stt,
         ):
             res = public.post(
@@ -578,7 +578,7 @@ class TestAnswerAudio:
     def test_다듬은_문장이_아니라_원문을_저장한다(self, public, db: Session, running):
         """대조에서 **원문으로 인용**되는 자리다 (ADR-0026 결정 3)."""
         with (
-            patch("app.s3.read_object", return_value=b"fake-audio"),
+            patch("app.shared.s3.read_object", return_value=b"fake-audio"),
             patch("app.agent.stt.transcribe", return_value=_stt_result()),
         ):
             public.post(
@@ -598,7 +598,7 @@ class TestAnswerAudio:
         slow["audio_duration_sec"] = 40.0  # 같은 문장을 40초에 = 아주 느리다
 
         with (
-            patch("app.s3.read_object", return_value=b"fake-audio"),
+            patch("app.shared.s3.read_object", return_value=b"fake-audio"),
             patch("app.agent.stt.transcribe", return_value=slow),
         ):
             res = public.post(
@@ -611,7 +611,7 @@ class TestAnswerAudio:
     def test_보통_속도면_진행_보조가_없다(self, public, running):
         """24자를 12.5초 = 1.9자/초. 중간에 한두 번 생각하며 말한 평범한 답변이다."""
         with (
-            patch("app.s3.read_object", return_value=b"fake-audio"),
+            patch("app.shared.s3.read_object", return_value=b"fake-audio"),
             patch("app.agent.stt.transcribe", return_value=_stt_result()),
         ):
             res = public.post(
@@ -622,7 +622,7 @@ class TestAnswerAudio:
 
     def test_남의_이력서_키는_거절한다(self, public, db: Session, running):
         """서버가 S3 를 대신 읽어 주는 경로다 — 키를 믿으면 그대로 유출이다."""
-        with patch("app.s3.read_object") as mock_read:
+        with patch("app.shared.s3.read_object") as mock_read:
             res = public.post(
                 "/api/v1/public/interview/tok-test/answer",
                 json={
@@ -638,7 +638,7 @@ class TestAnswerAudio:
     ):
         """반쯤 저장하면 답을 못 한 채로 다음 질문으로 넘어간다."""
         with (
-            patch("app.s3.read_object", return_value=b"fake-audio"),
+            patch("app.shared.s3.read_object", return_value=b"fake-audio"),
             patch("app.agent.stt.transcribe", side_effect=RuntimeError("STT 죽음")),
         ):
             res = public.post(
@@ -659,7 +659,7 @@ class TestAnswerAudio:
     def test_말이_안_담긴_녹음은_422(self, public, db: Session, running):
         """빈 문자열을 넣으면 '답한 질문'이 되어 다음으로 넘어간다."""
         with (
-            patch("app.s3.read_object", return_value=b"fake-audio"),
+            patch("app.shared.s3.read_object", return_value=b"fake-audio"),
             patch("app.agent.stt.transcribe", return_value=_stt_result("   ")),
         ):
             res = public.post(
@@ -694,7 +694,7 @@ class TestAnalyze:
         return t
 
     def test_설정이_없으면_503(self, as_user, admin_user: User, turn):
-        with patch("app.lie_analysis.SERVICE_URL", ""):
+        with patch("app.interview.lie_analysis.SERVICE_URL", ""):
             res = as_user(admin_user).post(f"/api/v1/interview-turns/{turn.id}/analyze")
         assert res.status_code == 503
 
@@ -706,12 +706,12 @@ class TestAnalyze:
         db.add(t)
         db.commit()
 
-        with patch("app.lie_analysis.SERVICE_URL", "http://lie.invalid"):
+        with patch("app.interview.lie_analysis.SERVICE_URL", "http://lie.invalid"):
             res = as_user(admin_user).post(f"/api/v1/interview-turns/{t.id}/analyze")
         assert res.status_code == 409
 
     def test_없는_회차는_404(self, as_user, admin_user: User):
-        with patch("app.lie_analysis.SERVICE_URL", "http://lie.invalid"):
+        with patch("app.interview.lie_analysis.SERVICE_URL", "http://lie.invalid"):
             res = as_user(admin_user).post("/api/v1/interview-turns/99999999/analyze")
         assert res.status_code == 404
 
@@ -721,9 +721,9 @@ class TestAnalyze:
         """담을 표를 아직 안 정했다 — 값이 먼저 쌓이면 근거처럼 쓰이기 시작한다."""
         result = {"pred": 0, "truth_pct": 100.0, "lie_pct": 0.0, "observations": []}
         with (
-            patch("app.lie_analysis.SERVICE_URL", "http://lie.invalid"),
-            patch("app.s3.read_object", return_value=b"fake-video"),
-            patch("app.lie_analysis.analyze", return_value=result) as mock_analyze,
+            patch("app.interview.lie_analysis.SERVICE_URL", "http://lie.invalid"),
+            patch("app.shared.s3.read_object", return_value=b"fake-video"),
+            patch("app.interview.lie_analysis.analyze", return_value=result) as mock_analyze,
         ):
             res = as_user(admin_user).post(f"/api/v1/interview-turns/{turn.id}/analyze")
 
@@ -737,9 +737,9 @@ class TestAnalyze:
 
     def test_분석이_죽으면_502(self, as_user, admin_user: User, turn):
         with (
-            patch("app.lie_analysis.SERVICE_URL", "http://lie.invalid"),
-            patch("app.s3.read_object", return_value=b"fake-video"),
-            patch("app.lie_analysis.analyze", side_effect=RuntimeError("서비스 죽음")),
+            patch("app.interview.lie_analysis.SERVICE_URL", "http://lie.invalid"),
+            patch("app.shared.s3.read_object", return_value=b"fake-video"),
+            patch("app.interview.lie_analysis.analyze", side_effect=RuntimeError("서비스 죽음")),
         ):
             res = as_user(admin_user).post(f"/api/v1/interview-turns/{turn.id}/analyze")
         assert res.status_code == 502
@@ -761,7 +761,7 @@ class TestAudioUploadUrl:
         return s
 
     def test_음성_형식이면_발급된다(self, public, running):
-        with patch("app.s3.presign_put", return_value="https://s3.example/put"):
+        with patch("app.shared.s3.presign_put", return_value="https://s3.example/put"):
             res = public.post(
                 "/api/v1/public/interview/tok-test/audio-upload-url",
                 json={
@@ -962,8 +962,8 @@ class TestLateTranscript:
         )
 
     def test_답한_칸의_늦은_전사는_받고_다시_채점한다(self, public, db, ended):
-        with patch("app.interview_scoring.score_interview_bg") as rescore, patch(
-            "app.api.interviews._generate_followup_bg"
+        with patch("app.interview.scoring.score_interview_bg") as rescore, patch(
+            "app.interview.api.interviews._generate_followup_bg"
         ) as followup:
             res = public.post(
                 "/api/v1/public/interview/tok-test/answer",
@@ -1049,3 +1049,94 @@ class TestTurnFindingsHook:
         monkeypatch.setenv("AGENT_FINDINGS_BACKEND", "ollama")
         body = client.get(f"/api/v1/interview-sessions/{running.id}").json()
         assert body["findings_enabled"] is True
+
+
+class _SameSession:
+    """배경 태스크가 **테스트 세션을 그대로 쓰게** 한다.
+
+    `seed_questions_bg` · `generate_followup_bg` 는 자기 `SessionLocal()` 을 연다.
+    테스트 픽스처의 트랜잭션은 커밋되지 않으므로 새 연결에서는 방금 만든 세션이
+    보이지 않고, 배경 함수가 "세션 없음" 으로 조용히 빠져나간다 — 그러면 상한
+    검증이 **거짓 통과**한다 (실제로 그렇게 통과했다). 닫지도 않는다: 닫으면
+    이후 단정에서 쓸 세션이 사라진다.
+    """
+
+    def __init__(self, session):
+        self._session = session
+
+    def __enter__(self):
+        return self._session
+
+    def __exit__(self, *exc):
+        return False
+
+
+class TestQuestionCounts:
+    """질문 수 상한 — 사전 4개 · 꼬리 3개 (2026-09-12 팀장 요청).
+
+    **왜 상한이 필요한가**: 사전 질문 10개 + 답변마다 붙는 꼬리질문이면 한 면접이
+    20문항을 넘어간다. 지원자가 지치고 시연에서는 끝까지 못 간다. 상한이 조용히
+    풀리면 그대로 재발하므로 숫자를 테스트로 못 박는다.
+    """
+
+    def test_사전_질문은_4개까지(self, db: Session, application, admin_user, monkeypatch):
+        from app.interview import session_service
+
+        s = _session(db, application, admin_user, token="tok-seed")
+        monkeypatch.setattr("app.db.SessionLocal", lambda: _SameSession(db))
+
+        # 주장 5개 × 질문 2개 = 10개를 주더라도 4개로 잘려야 한다
+        claims = [
+            {"claim": f"주장 {i}", "type": "역할", "questions": [f"질문 {i}-1", f"질문 {i}-2"]}
+            for i in range(5)
+        ]
+        monkeypatch.setattr(
+            "app.agent.interview_probe.sources_of",
+            lambda app, db=None: {"cover_letter": "글이 있다", "resume": "", "requirements": ""},
+        )
+        monkeypatch.setattr("app.agent.interview_probe.generate_probes", lambda s: claims)
+
+        session_service.seed_questions_bg(s.id)
+
+        rows = (
+            db.query(InterviewTurn)
+            .filter(InterviewTurn.session_id == s.id)
+            .order_by(InterviewTurn.seq)
+            .all()
+        )
+        assert len(rows) == session_service.MAX_SEED_QUESTIONS == 4, [r.question for r in rows]
+        # 주장별 첫 질문이 먼저 채워진다 — 같은 주장을 두 번 묻지 않는다
+        assert [r.question for r in rows] == ["질문 0-1", "질문 1-1", "질문 2-1", "질문 3-1"]
+
+    def test_꼬리질문은_3개까지(self, db: Session, application, admin_user, monkeypatch):
+        from app.interview import session_service
+
+        s = _session(db, application, admin_user, token="tok-follow", status="in_progress")
+        base = _question(db, s, seq=1)
+        base.transcript = "결제 정산 API 를 맡아 응답 시간을 절반으로 줄였습니다"
+        # 이미 상한만큼 꼬리질문이 있다
+        for i in range(session_service.MAX_FOLLOWUPS_PER_SESSION):
+            db.add(InterviewTurn(
+                session_id=s.id, seq=10 + i, question=f"꼬리 {i}",
+                generated_from_turn_id=base.id,
+            ))
+        db.flush()
+        monkeypatch.setattr("app.db.SessionLocal", lambda: _SameSession(db))
+
+        called: list[str] = []
+        monkeypatch.setattr(
+            "app.agent.interview_probe.probe_from_answer",
+            lambda **kw: called.append("x") or "새 꼬리질문",
+        )
+        session_service.generate_followup_bg(s.id, base.id)
+
+        assert called == [], "상한을 넘었는데 LLM 을 불렀다"
+        n = (
+            db.query(InterviewTurn)
+            .filter(
+                InterviewTurn.session_id == s.id,
+                InterviewTurn.generated_from_turn_id.is_not(None),
+            )
+            .count()
+        )
+        assert n == session_service.MAX_FOLLOWUPS_PER_SESSION == 3

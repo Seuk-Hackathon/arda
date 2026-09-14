@@ -1,47 +1,271 @@
+import { useCallback, useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
+import { api, ApiError } from '../api/client'
+import type { InterviewPublic } from '../api/types'
 import styles from './InterviewAi.module.css'
 import { AI_PHASE_LABEL, useAiInterview } from './useAiInterview'
 
 /* AI 면접 — 지원자 화면 (ADR-0029).
 
-   아르가 묻고, 지원자가 말하면 **버튼 없이** 다음 질문으로 넘어간다.
-   서버가 소리를 듣고 말이 끝난 것을 판정한다 (`ai/lie-detection/PROTOCOL.md`).
+   ## 앱과 같은 단계 UI (2026-09-14)
 
-   **판정을 여기에 띄우지 않는다.** ADR-0029 이고 소연님이 서비스 코드에도
-   적어 뒀다 — 판정을 실시간으로 보여 주면 그 자체가 답변을 바꾼다.
-   훅도 그 값을 상태로 들고 있지 않아서, 화면이 그리려 해도 그릴 것이 없다.
+   모바일 앱 `mobile/lib/screens/interview_screen.dart` 를 따라 상태별 화면을 나눈다:
+
+   | 세션 상태 | 화면 |
+   |---|---|
+   | 로딩 · 에러 | 스피너 · 재시도 |
+   | `pending` + 동의 필요 | 동의 화면 ("동의하고 계속하기") |
+   | `pending` + 동의 완료 | 준비 화면 ("시작하기") |
+   | `in_progress` | 실시간 면접 (카메라·질문) |
+   | `done` | 완료 |
+   | `expired` | 만료 |
+
+   옛 웹은 링크 클릭만으로 자동 동의·시작이 이뤄져 지원자가 무엇이 시작되는지
+   모른 채 카메라 권한 팝업을 마주쳤다. 앱은 명시적 확인을 받는 흐름 —
+   지원자에게 무엇이 시작되는지 안내하고 준비할 시간을 준다.
+
+   ## 판정을 여기에 띄우지 않는다 (ADR-0029)
+
+   판정을 실시간으로 보여 주면 그 자체가 답변을 바꾼다. 훅도 그 값을 상태로
+   들고 있지 않아, 화면이 그리려 해도 그릴 것이 없다.
 
    폰 세로가 기본이다. */
 
+type LoadState =
+  | { kind: 'loading' }
+  | { kind: 'ready'; data: InterviewPublic }
+  | { kind: 'invalid' }
+  | { kind: 'error'; message: string }
+
 export default function InterviewAi() {
   const { token } = useParams<{ token: string }>()
-  const { phase, question, seq, error, videoRef, leave } = useAiInterview(token ?? null)
+  const [state, setState] = useState<LoadState>({ kind: 'loading' })
+  const [started, setStarted] = useState(false)
+  const [pending, setPending] = useState(false)
+
+  // 세션 상태를 REST 로 가져온다. 소켓은 '시작' 이후에만 연다.
+  const load = useCallback(async () => {
+    if (!token) return
+    try {
+      const data = await api.get<InterviewPublic>(`/public/interview/${token}`, { auth: false })
+      setState({ kind: 'ready', data })
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 404) setState({ kind: 'invalid' })
+      else setState({ kind: 'error', message: err instanceof ApiError ? err.message : '잠시 후 다시 시도해 주세요' })
+    }
+  }, [token])
+
+  useEffect(() => { void load() }, [load])
+
+  // 소켓은 started=true 로 바뀌었을 때만 열린다 (useAiInterview 는 token=null 이면 아무것도 안 함).
+  const { phase, question, seq, error, videoRef, leave } = useAiInterview(started ? token ?? null : null)
+
+  async function handleConsent() {
+    if (!token) return
+    setPending(true)
+    try {
+      await api.post(`/public/interview/${token}/consent`, { agreed: true }, { auth: false })
+      await load()
+    } catch (err) {
+      setState({ kind: 'error', message: err instanceof ApiError ? err.message : '동의를 저장하지 못했습니다' })
+    } finally {
+      setPending(false)
+    }
+  }
+
+  function handleStart() {
+    // useAiInterview 훅이 REST start + 소켓 연결 + 카메라 요청을 순서대로 처리한다.
+    setStarted(true)
+  }
 
   return (
     <div className={styles.page}>
-      <header className={styles.bar}>
-        <h1 className={styles.logo}><span className={styles.seed}>A</span>rda</h1>
-        <div className={styles.state} aria-live="polite">
-          {/* 말하는 중일 때만 점이 뛴다. 지원자가 "듣고 있나?" 를 알아야 한다 —
-              1~2초 공백에 멈췄다고 생각하면 그 자체가 면접을 망친다. */}
-          <span className={`${styles.dot} ${phase === 'listening' ? styles.dotLive : ''}`} />
-          {AI_PHASE_LABEL[phase]}
-        </div>
+      <header className={styles.topBar}>
+        <h1 className={styles.title}>AI 면접</h1>
       </header>
 
-      {/* 질문. 화면에서 제일 큰 글씨다 — 지원자가 볼 것은 이것 하나다. */}
+      <div className={styles.body}>
+        {state.kind === 'loading' && <Loading />}
+        {state.kind === 'invalid' && <Invalid />}
+        {state.kind === 'error' && <ErrorPanel message={state.message} onRetry={load} />}
+
+        {state.kind === 'ready' && (
+          <ReadyBody
+            data={state.data}
+            started={started}
+            pending={pending}
+            phase={phase}
+            question={question}
+            seq={seq}
+            liveError={error}
+            videoRef={videoRef}
+            onConsent={handleConsent}
+            onStart={handleStart}
+            onLeave={leave}
+          />
+        )}
+      </div>
+    </div>
+  )
+}
+
+function Loading() {
+  return <p className={styles.help}>불러오는 중입니다…</p>
+}
+
+function Invalid() {
+  return (
+    <>
+      <h2 className={styles.name}>링크를 확인해 주세요</h2>
+      <p className={styles.help}>
+        이 면접 링크는 찾을 수 없습니다. 담당자에게 문의해 주세요.
+      </p>
+    </>
+  )
+}
+
+function ErrorPanel({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <>
+      <p className={styles.error} role="alert">{message}</p>
+      <div className={styles.actions}>
+        <button type="button" className="btn btn-secondary" onClick={onRetry}>
+          다시 시도
+        </button>
+      </div>
+    </>
+  )
+}
+
+function ReadyBody(props: {
+  data: InterviewPublic
+  started: boolean
+  pending: boolean
+  phase: ReturnType<typeof useAiInterview>['phase']
+  question: string | null
+  seq: number | null
+  liveError: string | null
+  videoRef: ReturnType<typeof useAiInterview>['videoRef']
+  onConsent: () => void
+  onStart: () => void
+  onLeave: () => void
+}) {
+  const { data, started, pending, phase, question, seq, liveError, videoRef, onConsent, onStart, onLeave } = props
+
+  const posting = data.posting_title
+  const name = data.applicant_name
+
+  // 앱과 같은 상태 분기. `started` 는 웹만의 UI 상태 — 지원자가 시작 버튼을 눌러
+  // 훅을 켰는지. `data.status` 가 이미 in_progress 여도 (새로고침 등) 다시
+  // 시작하기를 요구하지 않고 바로 실시간 흐름으로 넘긴다.
+  const showConsent = data.status === 'pending' && data.consent_required
+  const showReady = data.status === 'pending' && !data.consent_required && !started
+  const showLive = (data.status === 'in_progress' || started) && data.status !== 'done' && data.status !== 'expired'
+  const showDone = data.status === 'done'
+  const showExpired = data.status === 'expired'
+
+  return (
+    <>
+      <p className={styles.posting}>{posting}</p>
+      <h2 className={styles.name}>{name}님</h2>
+
+      {showConsent && (
+        <ConsentPanel busy={pending} onAgree={onConsent} />
+      )}
+
+      {showReady && (
+        <ReadyPanel busy={pending} onStart={onStart} />
+      )}
+
+      {showLive && (
+        <LivePanel
+          phase={phase}
+          question={question}
+          seq={seq}
+          liveError={liveError}
+          videoRef={videoRef}
+          onLeave={onLeave}
+        />
+      )}
+
+      {showDone && <DonePanel />}
+      {showExpired && <ExpiredPanel />}
+    </>
+  )
+}
+
+function ConsentPanel({ busy, onAgree }: { busy: boolean; onAgree: () => void }) {
+  return (
+    <>
+      <p className={styles.help}>
+        면접이 시작되면 <strong>카메라와 마이크가 켜집니다</strong>. 지원자님의 얼굴과
+        답변이 채용 검토 목적으로 저장됩니다. 다른 목적으로 사용되지 않습니다.
+      </p>
+      <div className={styles.actions}>
+        <button type="button" className="btn btn-primary" disabled={busy} onClick={onAgree}>
+          {busy ? '진행 중…' : '동의하고 계속하기'}
+        </button>
+      </div>
+    </>
+  )
+}
+
+function ReadyPanel({ busy, onStart }: { busy: boolean; onStart: () => void }) {
+  return (
+    <>
+      <p className={styles.help}>
+        준비되시면 아래 버튼을 눌러 시작하세요. 시작 후 카메라와 마이크 권한을
+        허용해 주세요.
+      </p>
+      <div className={styles.actions}>
+        <button type="button" className="btn btn-primary" disabled={busy} onClick={onStart}>
+          시작하기
+        </button>
+      </div>
+    </>
+  )
+}
+
+function LivePanel(props: {
+  phase: ReturnType<typeof useAiInterview>['phase']
+  question: string | null
+  seq: number | null
+  liveError: string | null
+  videoRef: ReturnType<typeof useAiInterview>['videoRef']
+  onLeave: () => void
+}) {
+  const { phase, question, seq, liveError, videoRef, onLeave } = props
+  const showLiveDot = phase === 'listening'
+
+  return (
+    <>
+      <div className={styles.cameraBox}>
+        <video ref={videoRef} className={styles.cam} autoPlay playsInline muted />
+        {showLiveDot && (
+          <span className={styles.liveDot} aria-hidden>
+            <span className={styles.liveDotPulse} />
+            LIVE
+          </span>
+        )}
+      </div>
+
+      <div className={styles.state} aria-live="polite">
+        <span className={`${styles.stateDot} ${phase === 'listening' ? styles.stateDotLive : ''}`} />
+        {AI_PHASE_LABEL[phase]}
+      </div>
+
       <section className={styles.askWrap}>
         {phase === 'error' ? (
-          <p className={styles.error} role="alert">{error}</p>
+          <p className={styles.error} role="alert">{liveError}</p>
         ) : phase === 'done' ? (
           <>
-            <h2 className={styles.ask}>면접이 끝났습니다</h2>
+            <h3 className={styles.ask}>면접이 끝났습니다</h3>
             <p className={styles.help}>참여해 주셔서 감사합니다.</p>
           </>
         ) : question ? (
           <>
             {seq !== null && <p className={styles.seq}>질문 {seq}</p>}
-            <h2 className={styles.ask}>{question}</h2>
+            <h3 className={styles.ask}>{question}</h3>
             <p className={styles.help}>
               준비되시면 그냥 말씀하시면 됩니다. 버튼을 누르지 않으셔도 됩니다.
             </p>
@@ -51,15 +275,29 @@ export default function InterviewAi() {
         )}
       </section>
 
-      {/* 자기 모습. 카메라가 켜졌는지 스스로 확인하는 자리다.
-          거울처럼 보여야 자연스러우므로 좌우를 뒤집는다(화면에만). */}
-      <video ref={videoRef} className={styles.cam} autoPlay playsInline muted />
-
       <footer className={styles.actions}>
-        <button type="button" className="btn btn-secondary" onClick={leave}>
+        <button type="button" className="btn btn-secondary" onClick={onLeave}>
           면접 끝내기
         </button>
       </footer>
-    </div>
+    </>
+  )
+}
+
+function DonePanel() {
+  return (
+    <section className={styles.askWrap}>
+      <h3 className={styles.ask}>면접이 끝났습니다</h3>
+      <p className={styles.help}>참여해 주셔서 감사합니다.</p>
+    </section>
+  )
+}
+
+function ExpiredPanel() {
+  return (
+    <section className={styles.askWrap}>
+      <h3 className={styles.ask}>면접 링크가 만료되었습니다</h3>
+      <p className={styles.help}>담당자에게 문의해 주세요.</p>
+    </section>
   )
 }

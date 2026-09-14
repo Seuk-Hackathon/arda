@@ -37,6 +37,8 @@ import re
 import time
 
 from app.agent.interview_probe import _fingerprint
+from app.adapter.outbound.pg.application_pg_repository import PgApplicationRepository
+from app.adapter.outbound.pg.interview_pg_repository import PgInterviewRepository
 
 logger = logging.getLogger(__name__)
 
@@ -175,7 +177,14 @@ def _generate(
         result.text or "", cover=cover, resume=resume, transcript=transcript
     )
     if findings is None:
-        logger.warning("대조 파싱 실패 (stop=%s, prompt=%s)", result.stop_reason, tag)
+        # 2026-09-14: 실측상 이 경로가 너무 자주 나온다 (222 turns 중 findings_turn 5개
+        # 만 남음). Claude 가 순수 JSON 대신 앞뒤 설명을 붙이거나, 완전한 JSON 이 아닌
+        # 텍스트를 반환할 때 발생. 이제는 앞 100자를 로그에 남겨 원인 추적 가능.
+        preview = (result.text or "").strip()[:120].replace("\n", " ")
+        logger.warning(
+            "대조 파싱 실패 (stop=%s, prompt=%s, preview=%r)",
+            result.stop_reason, tag, preview,
+        )
         return None
     return findings
 
@@ -227,10 +236,22 @@ def _parse_findings(
             s = s[:-3]
         s = s.strip()
 
+    # 2026-09-14: Claude 가 프롬프트 지시("JSON 한 줄로만 답하라") 를 어기고 앞뒤에
+    # 문장을 붙일 때가 있다 — "이 답변에는 맞춰 볼 서류 주장이 없어 빈 결과입니다.
+    # {"findings": []}" 같은 식. 옛 파서는 그때마다 None → "대조 파싱 실패" 로그가
+    # 남고 화면에 대조가 안 뜨는데, 실제로는 빈 결과가 올바른 응답이다.
+    # 첫 `{...}` 블록만 추출해 재시도한다 · 이것도 실패하면 None (진짜 파싱 오류).
     try:
         data = json.loads(s)
     except json.JSONDecodeError:
-        return None
+        start = s.find("{")
+        end = s.rfind("}")
+        if start < 0 or end <= start:
+            return None
+        try:
+            data = json.loads(s[start : end + 1])
+        except json.JSONDecodeError:
+            return None
     if not isinstance(data, dict) or not isinstance(data.get("findings"), list):
         return None
 
@@ -305,7 +326,7 @@ def save_turn_findings(db, turn_id: int) -> int | None:
     """
     from sqlalchemy import delete, select
 
-    from app.models import Application, InterviewFinding, InterviewSession, InterviewTurn
+    from app.models import InterviewFinding, InterviewTurn
 
     turn = db.get(InterviewTurn, turn_id)
     if turn is None:
@@ -315,8 +336,8 @@ def save_turn_findings(db, turn_id: int) -> int | None:
         # 말이 안 담겼거나 전사를 못 한 칸. 맞춰 볼 말이 없다 — 토큰을 쓰지 않는다
         return 0
 
-    session = db.get(InterviewSession, turn.session_id)
-    app_row = db.get(Application, session.application_id) if session else None
+    session = PgInterviewRepository(db).get_session(turn.session_id)
+    app_row = PgApplicationRepository(db).get(session.application_id) if session else None
     if app_row is None:
         return None
 
@@ -377,12 +398,12 @@ def save_session_findings(db, session_id: int) -> int | None:
     """
     from sqlalchemy import select
 
-    from app.models import Application, InterviewFinding, InterviewSession, InterviewTurn
+    from app.models import InterviewFinding, InterviewTurn
 
-    session = db.get(InterviewSession, session_id)
+    session = PgInterviewRepository(db).get_session(session_id)
     if session is None:
         return None
-    app_row = db.get(Application, session.application_id)
+    app_row = PgApplicationRepository(db).get(session.application_id)
     if app_row is None:
         return None
 

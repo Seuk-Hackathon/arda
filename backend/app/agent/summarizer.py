@@ -11,7 +11,9 @@ from datetime import UTC, datetime
 
 from sqlalchemy.orm import Session
 
-from app.models import Application, JobPosting
+from app.models import Application
+from app.adapter.outbound.pg.application_pg_repository import PgApplicationRepository
+from app.adapter.outbound.pg.hiring_pg_repository import PgHiringRepository
 
 logger = logging.getLogger(__name__)
 
@@ -91,7 +93,7 @@ def _build_prompt_vars(db: Session, app: Application) -> dict[str, str]:
     """
     from app.agent.extractor import extract_text
 
-    posting = db.get(JobPosting, app.job_posting_id)
+    posting = PgHiringRepository(db).get_posting(app.job_posting_id)
     posting_title = posting.title if posting else "공고 정보 없음"
     # 요건 = description + requirements(0013). 둘 다 비면 "정보 없음" 을 그대로 보여 준다 —
     # 프롬프트가 빈 문장을 요건으로 오해하지 않게. 우대·인재상도 같은 규칙 (ADR-0034).
@@ -141,7 +143,7 @@ def _build_prompt_vars(db: Session, app: Application) -> dict[str, str]:
 def _talent_profile(db: Session) -> str:
     """회사 인재상(company_profile.talent_profile). 없으면 "정보 없음" — 지어내지 않게."""
     try:
-        from app.company import get_profile
+        from app.hiring.company import get_profile
 
         text = (get_profile(db).talent_profile or "").strip()
     except Exception:  # 가짜 DB(테스트)·프로파일 표 없음
@@ -222,7 +224,7 @@ def _parse_json(
 
 def generate_summary(db: Session, application_id: int) -> str | None:
     """3단계 파이프라인으로 AI 요약을 생성하고 DB에 저장한다."""
-    app = db.get(Application, application_id)
+    app = PgApplicationRepository(db).get(application_id)
     if app is None:
         logger.warning("요약 대상 없음: application_id=%d", application_id)
         return None
@@ -306,7 +308,7 @@ def generate_summary(db: Session, application_id: int) -> str | None:
 
     # 세 갈래 → 서류 100점(회사 가중치) → 옛 화면용 1~5점은 100점에서 내려 만든다.
     # v1 응답(fit_score 만 있음)이 와도 죽지 않게 fit_score 를 먼저 살린다.
-    from app import screening
+    from app.application import screening
 
     parts = {
         "requirements": _clamp_score(step2.get("requirements_score")),
@@ -420,9 +422,9 @@ def generate_summary_bg(application_id: int) -> None:
         # 자동 심사 (ADR-0034) — 점수가 나왔을 때만. 요약이 없으면 사람이 본다.
         if summary is not None:
             try:
-                from app import screening
+                from app.application import screening
 
-                app = db.get(Application, application_id)
+                app = PgApplicationRepository(db).get(application_id)
                 if app is not None:
                     screening.decide_document(db, app)
             except Exception:
