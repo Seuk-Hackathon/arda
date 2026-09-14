@@ -27,6 +27,7 @@ from fastapi import FastAPI, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
 
 import interview_ws as iw
+import speaker_match
 from feature_extractor import analyze_timeseries, extract_features
 from interview_ws import (
     SERVICE_TOKEN,
@@ -185,6 +186,16 @@ KIND_VIDEO = 0x02
 # 여기서 포기하면 그 답변은 영영 없다. 그렇다고 무한정 잡고 있으면 워커 자리가
 # 안 돌아온다 — 긴 답변 하나를 CPU 로 끝낼 만큼만 준다.
 DRAIN_TIMEOUT_SEC = float(os.getenv("DRAIN_TIMEOUT_SEC", "180"))
+
+# 목소리 대조를 끄는 스위치. **켜는 스위치가 아니다** — 모델 파일이 있으면 돈다.
+# 이건 잘못 잘랐다는 신고가 들어왔을 때 배포를 기다리지 않고 끌 자리다.
+# 세션 59("첫 문장이 빠졌다")처럼 잘린 말은 어디에도 안 남아서, 의심되는
+# 순간 바로 멈출 수 있어야 한다. `VOICE_GATE=0` → 자르지 않는다.
+VOICE_GATE = os.getenv("VOICE_GATE", "1").strip() not in ("0", "false", "")
+
+# 답변이 통째로 남의 목소리로 보인 것이 몇 번 이어지면 지문을 다시 뜨나.
+# 1 이면 한 번 어긋난 것만으로 지문을 갈아 끼워 오히려 잡음을 등록하게 된다.
+VOICE_STRIKES = 2
 
 
 @app.websocket("/ws/live")
@@ -597,6 +608,66 @@ async def _end_answer(ws, client, session: InterviewSession) -> None:
     await ws.send_json({"type": "done"})
 
 
+async def _drop_other_voice(session: InterviewSession, pcm: bytes) -> bytes:
+    """등록한 지원자 목소리가 **아닌** 구간을 전사에서 뺀다 (2026-09-11).
+
+    "말을 했는데 인식을 못 하고, 주변 소음이 텍스트로 들어간다" 는 신고에서 왔다.
+    방마다 조용한 정도가 달라 소리 크기로는 가를 수 없으니 주인으로 가른다.
+
+    **전사 대기줄 안에서 돈다.** 지원자는 이미 다음 질문을 받은 뒤라 여기서 몇 초
+    더 써도 기다리지 않는다 — 답변이 끝나는 자리(`_end_answer`)에 두면 #138 로
+    없앤 기다림이 그대로 돌아온다.
+
+    잘못될 때는 **아무것도 안 자른 상태로** 떨어지게 돼 있다. 모델이 없어도,
+    지문을 못 떠도, 답변이 통째로 남처럼 보여도 원본을 그대로 돌려준다.
+    """
+    # 모델이 있나는 여기서 안 본다 — 처음 보는 순간 84MB 를 읽느라 1초쯤 멈추는데,
+    # 이 대기줄은 이벤트 루프 위라 그동안 이 워커의 **다른 면접까지** 같이 멈춘다.
+    # 없으면 `enroll` 이 None 을 내고 아래로 안 내려간다.
+    if not VOICE_GATE or session.voice_off:
+        return pcm
+
+    if session.voiceprint is None:
+        # 첫 등록. 3초 넘게 이어 말한 대목이 나올 때까지 답변마다 다시 시도한다.
+        session.voiceprint = await asyncio.to_thread(speaker_match.enroll, pcm)
+        if session.voiceprint is not None:
+            iw.ANSWER_STATS["voice_enrolled"] += 1
+            logger.info("목소리 등록: token=%s", session.token[:8])
+        return pcm
+
+    kept, dropped, all_other = await asyncio.to_thread(
+        speaker_match.filter_other, pcm, session.voiceprint
+    )
+
+    if all_other:
+        # 답변 하나가 통째로 남의 것일 리는 드물다 — 등록이 잘못됐을 때가 더 흔하다
+        # (첫 답변에 담당자 목소리나 TV 가 섞여 그게 지문이 된 경우). 연달아 나오면
+        # 지금 답변으로 다시 뜬다. 다시 떠도 또 어긋나면 그때는 접는다.
+        session.voice_strikes += 1
+        if session.voice_strikes < VOICE_STRIKES:
+            return pcm
+        session.voice_strikes = 0
+        fresh = None if session.voice_reenrolled else (
+            await asyncio.to_thread(speaker_match.enroll, pcm)
+        )
+        if fresh is None:
+            session.voice_off = True
+            iw.ANSWER_STATS["voice_disabled"] += 1
+            logger.warning("목소리 대조를 접는다: token=%s", session.token[:8])
+        else:
+            session.voiceprint = fresh
+            session.voice_reenrolled = True
+            iw.ANSWER_STATS["voice_reenrolled"] += 1
+            logger.info("목소리를 다시 등록했다: token=%s", session.token[:8])
+        return pcm
+
+    session.voice_strikes = 0
+    if dropped:
+        iw.ANSWER_STATS["other_voice"] += 1
+        logger.info("남의 목소리 %.1f초를 뺐다: token=%s", dropped, session.token[:8])
+    return kept
+
+
 async def _transcribe_pump(client, session: InterviewSession) -> None:
     """세션의 전사 대기줄을 순서대로 비운다. 면접당 하나 돈다.
 
@@ -617,6 +688,7 @@ async def _transcribe_pump(client, session: InterviewSession) -> None:
             session.transcribing = True
             started = time.monotonic()
             try:
+                pcm = await _drop_other_voice(session, pcm)
                 transcript = await transcribe_async(pcm, hint_of(session.questions))
             finally:
                 session.transcribing = False

@@ -465,6 +465,16 @@ class InterviewSession:
         # 전사 대기줄. **지원자를 기다리게 하지 않으려고** 여기에 넣고 다음 질문을
         # 먼저 보낸다. 세션마다 하나라 한 사람의 답변은 낸 순서대로 저장된다.
         self.pending: asyncio.Queue = asyncio.Queue()
+        # 지원자 목소리 지문 (speaker_match). 첫 답변에서 뜨고 면접이 끝나면 사라진다.
+        self.voiceprint = None
+        # 답변이 통째로 남의 목소리로 보인 횟수가 연달아 몇 번인가.
+        # 이어지면 지문이 잘못 떠진 것으로 보고 다시 뜬다 (app.py `_drop_other_voice`).
+        self.voice_strikes = 0
+        self.voice_reenrolled = False
+        # 이 면접에서는 목소리 대조를 접었다. **한 번 끄면 다시 켜지 않는다** —
+        # 두 번 다시 떠도 안 맞는 목소리라면 모델이 이 사람을 못 잡는 것이고,
+        # 그때는 잡음을 남기는 편이 말을 자르는 것보다 낫다.
+        self.voice_off = False
 
     # ── 받기 ────────────────────────────────────────────────
     def add_audio(self, pcm: bytes) -> str | None:
@@ -1062,6 +1072,12 @@ ANSWER_STATS = {
     "by_phrase": 0,
     "by_limit": 0,
     "pause_checks": 0,
+    # 목소리 대조 (speaker_match · 2026-09-11). `voice_enrolled` 가 0 이면 대조가
+    # 아예 안 돈 것이다 — 모델 파일이 없거나 3초 넘게 이어 말한 답변이 없었다.
+    "voice_enrolled": 0,
+    "other_voice": 0,
+    "voice_reenrolled": 0,
+    "voice_disabled": 0,
 }
 
 
