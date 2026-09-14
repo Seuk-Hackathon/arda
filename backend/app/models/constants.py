@@ -12,7 +12,14 @@ DOC_DECISIONS = ("pass", "reject", "hold")
 DECISION_SOURCES = ("agent", "human")
 ROLES = ("admin", "member")
 POSTING_STATUSES = ("draft", "open", "closed")
-APPLICATION_SOURCES = ("form", "manual")
+# 2026-09-14 (ADR-0037): 회사 통합 API 흡수 경로를 위한 값 추가.
+# - integration: 서버-투-서버 API push (회사 백엔드)
+# - email: 이메일 파싱 인입 (n8n)
+# - saramin/jobkorea/wanted: 잡보드 어댑터
+APPLICATION_SOURCES = (
+    "form", "manual",
+    "integration", "email", "saramin", "jobkorea", "wanted",
+)
 FILE_KINDS = ("resume", "cover_letter")
 EMAIL_STATUSES = ("queued", "sent", "failed")
 PROPOSAL_STATUSES = ("proposed", "confirmed", "expired", "canceled")

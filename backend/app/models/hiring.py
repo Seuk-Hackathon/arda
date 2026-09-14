@@ -191,3 +191,46 @@ class EmailTemplate(Base):
             _in("stage", TEMPLATE_STAGES), name="ck_email_templates_stage"
         ),
     )
+
+
+# ── integration_clients — 회사 통합 API key (ADR-0037) ──────────────────
+class IntegrationClient(Base):
+    """회사가 자기 시스템에서 Arda 로 지원자를 push 할 때 쓰는 API key.
+
+    회사 하나에 여러 key 가능 — 시스템별 (Workday · 자체 폼 · 잡보드 어댑터)로
+    나눠 발급하면 사용처를 추적하고 개별 회수할 수 있다. `revoked_at` 은 soft delete —
+    감사(누가 언제 통합을 썼는지)를 위해 행은 남긴다.
+
+    발급 시 원본 key 는 **딱 한 번** 응답으로 노출된다 (bcrypt 해시만 저장).
+    관리 UI 는 `api_key_prefix` (앞 8~16자) 로만 식별한다 — 이건 노출돼도 안전.
+    """
+
+    __tablename__ = "integration_clients"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    company_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("company_profile.id"), nullable=False, index=True
+    )
+    # bcrypt 해시. 원본 key 는 발급 순간만 응답에 실린다.
+    api_key_hash: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    # "arda_ak_" 접두어 + 8~16 자 · 관리 UI 표시용 (노출 안전)
+    api_key_prefix: Mapped[str] = mapped_column(String(24), nullable=False)
+    # "Workday integration" 등 별칭 — 관리 UI 에서 어느 시스템인지 구분
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+
+    # (선택) 상태 변경 시 회사에 콜백. HMAC-SHA256(webhook_secret) 서명
+    webhook_url: Mapped[str | None] = mapped_column(String(500))
+    webhook_secret: Mapped[str | None] = mapped_column(String(128))
+
+    # Rate limit — 회사당 분당 요청 상한. 기본 60.
+    rate_limit_per_minute: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("60")
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    # soft delete — 감사용 · 회수 후에도 행은 남긴다.
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # 최근 API 사용 시각 · 유휴 감시·인증 로그
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
