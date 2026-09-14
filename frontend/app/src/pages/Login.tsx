@@ -25,10 +25,17 @@ export default function Login() {
   const { user, loading, login } = useAuth()
   const dive = useDive()
 
-  /* **담당자가 기본이다** — 이 화면을 매일 켜는 사람이 담당자다. 지원자는
-     메일 링크로 들어오거나 한 번 고르고 나면 /my 가 토큰을 기억한다(앱과 같은
-     판단: mobile/lib/screens/login_screen.dart). */
-  const [role, setRole] = useState<Role>('staff')
+  /* **담당자가 기본이다** — 이 화면을 매일 켜는 사람이 담당자다(앱과 같은
+     판단: mobile/lib/screens/login_screen.dart).
+
+     예외는 `?as=applicant` 다. /my 가 토큰 없이 열렸거나 지원자가 로그아웃하면
+     여기로 보내는데, 그때 담당자 칸이 떠 있으면 **방금 나간 사람이 남의 칸을
+     보게 된다**(2026-09-14). */
+  const [role, setRole] = useState<Role>(() =>
+    new URLSearchParams(window.location.search).get('as') === 'applicant'
+      ? 'applicant'
+      : 'staff',
+  )
 
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -46,7 +53,11 @@ export default function Login() {
   /* 이미 로그인된 사용자가 /login 에 오면 폼을 또 보여주지 않는다.
      pending 중엔 제외 — login() 직후 setUser 가 먼저 돌면 handleSubmit 의
      navigate 와 겹치지만 둘 다 replace 라 무해하다. */
-  if (!loading && !pending && user) {
+  /* 담당자가 이미 로그인돼 있으면 폼을 또 보여주지 않는다.
+
+     **단 `?as=applicant` 로 온 사람은 예외다** — 담당자가 로그인해 둔 브라우저
+     에서는 지원자가 자기 현황을 볼 길이 아예 없어진다(2026-09-14). */
+  if (!loading && !pending && user && role !== 'applicant') {
     const to = (location.state as FromState | null)?.from?.pathname ?? '/dashboard'
     return <Navigate to={to} replace />
   }
