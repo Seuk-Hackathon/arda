@@ -3,6 +3,8 @@ output/
 raw_traces.json
 synth_cases.jsonl
 .synth_cache.jsonl
+synth_reverse.jsonl
+.synth_reverse_cache.jsonl
 dataset.*.jsonl
 *.gguf
 *.safetensors

@@ -27,6 +27,7 @@ from typing import Any
 ROOT = Path(__file__).parent
 RAW_PATH = ROOT / "raw_traces.json"
 SYNTH_PATH = ROOT / "synth_cases.jsonl"
+REVERSE_PATH = ROOT / "synth_reverse.jsonl"  # synth_reverse.py 산출물 (있으면 병합)
 INTERVIEW_SEED_PATH = ROOT / "synth_seed_interview.yaml"
 PROMPTS_DIR = ROOT.parent.parent / "backend" / "app" / "agent" / "prompts"
 SYSTEM_PROMPT_PATH = PROMPTS_DIR / "agent.v1.md"
@@ -65,12 +66,12 @@ def load_raw_traces() -> list[dict[str, Any]]:
     return json.loads(RAW_PATH.read_text(encoding="utf-8"))
 
 
-def load_synth_cases() -> list[dict[str, Any]]:
-    if not SYNTH_PATH.exists():
-        print(f"[build] {SYNTH_PATH.name} 없음 — synth_expand.py 를 먼저 돌려라", file=sys.stderr)
+def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+    """한 파일 → dict 리스트. 파싱 실패 라인은 조용히 스킵."""
+    if not path.exists():
         return []
-    out = []
-    for line in SYNTH_PATH.read_text(encoding="utf-8").splitlines():
+    out: list[dict[str, Any]] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
         if not line.strip():
             continue
         try:
@@ -78,6 +79,23 @@ def load_synth_cases() -> list[dict[str, Any]]:
         except json.JSONDecodeError:
             continue
     return out
+
+
+def load_synth_cases() -> list[dict[str, Any]]:
+    """`synth_cases.jsonl` (확장) + `synth_reverse.jsonl` (역합성, 있으면) 을 병합.
+
+    두 스크립트 산출물이 동일 JSON 스키마라 그대로 이어 붙일 수 있다. `_pass` 로
+    출처(pass=0 vs reverse-0 등) 를 구분한다.
+    """
+    synth = _read_jsonl(SYNTH_PATH)
+    if not synth:
+        print(f"[build] {SYNTH_PATH.name} 없음 — synth_expand.py 를 먼저 돌려라", file=sys.stderr)
+
+    reverse = _read_jsonl(REVERSE_PATH)
+    if reverse:
+        print(f"[build] {REVERSE_PATH.name}: {len(reverse)}건 (역합성)", file=sys.stderr)
+
+    return synth + reverse
 
 
 def _render_prompt(template: str, vars: dict[str, Any]) -> str:
