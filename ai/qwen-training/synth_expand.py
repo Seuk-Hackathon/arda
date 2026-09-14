@@ -6,6 +6,15 @@
     산출물은 시드와 동일 스키마의 JSONL — build_dataset.py 가 나중에 병합·마스킹한다.
 
 산출물: synth_cases.jsonl (각 줄 하나가 {input, tool_calls, reply, pending_action, ...}).
+
+사용:
+    python synth_expand.py                              # 기본 pass=0 · 변형 4개
+    VARIATIONS_PER_SEED=8 SYNTH_PASS=1 python synth_expand.py  # 두 번째 pass · 시드마다 8개 더
+
+여러 pass 로 누적할 때 원칙:
+    - `SYNTH_PASS` 를 매 실행에 새 값으로 (0, 1, 2, ...) — 캐시가 (seed_id, pass) 로 관리.
+    - Haiku 는 확률적이라 pass 마다 표현이 달라진다 (같은 시드에서 다른 발화).
+    - 단 카테고리 balance 는 확인해야 함 — 어떤 시드는 좋은 변형이 어렵다 (multi_turn 등).
 """
 
 from __future__ import annotations
@@ -51,10 +60,16 @@ _load_dotenv()
 
 SEED_PATH = Path(__file__).parent / "synth_seed.yaml"
 OUT_PATH = Path(__file__).parent / "synth_cases.jsonl"
-CACHE_PATH = Path(__file__).parent / ".synth_cache.jsonl"  # 이미 만든 seed_id 는 스킵
+CACHE_PATH = Path(__file__).parent / ".synth_cache.jsonl"  # 이미 만든 (seed_id, pass) 는 스킵
 
 MODEL = "claude-haiku-4-5-20251001"
-VARIATIONS_PER_SEED = 4
+# 시드 하나에서 몇 개의 변형을 만들지. 지금까지 4 로 돌아 188건 만들었음. env 로 오버라이드.
+VARIATIONS_PER_SEED = int(os.getenv("VARIATIONS_PER_SEED", "4"))
+# 여러 번 돌려 누적할 때 각 실행에 라벨을 붙인다 (2026-09-14). 캐시 키가
+# (seed_id, pass) 라 같은 시드에서 pass 를 바꿔 다시 실행하면 새 변형이 추가된다.
+# 예: 첫 실행 (기본 pass="0") · 두 번째 실행 (`SYNTH_PASS=1` 로 지정) → 시드마다
+# `VARIATIONS_PER_SEED` 개 더 생성. Haiku 는 확률적이라 pass 마다 표현이 달라진다.
+SYNTH_PASS = os.getenv("SYNTH_PASS", "0")
 MAX_TOKENS = 2048
 TEMPERATURE = 0.7
 
@@ -94,7 +109,10 @@ def load_seeds() -> list[dict[str, Any]]:
     return data["seeds"]
 
 
-def load_cache() -> set[str]:
+def load_cache() -> set[tuple[str, str]]:
+    """이미 처리된 `(seed_id, pass)` 조합을 돌려준다. 같은 seed_id 라도 pass 가 다르면
+    재생성 대상 — 여러 pass 를 돌려 데이터 누적할 수 있게 한다.
+    """
     if not CACHE_PATH.exists():
         return set()
     done = set()
@@ -102,7 +120,9 @@ def load_cache() -> set[str]:
         if not line.strip():
             continue
         try:
-            done.add(json.loads(line)["_seed_id"])
+            case = json.loads(line)
+            # 옛 캐시에는 _pass 없음 → "0" 으로 취급 (첫 번째 실행분).
+            done.add((case["_seed_id"], case.get("_pass", "0")))
         except (json.JSONDecodeError, KeyError):
             continue
     return done
@@ -138,17 +158,21 @@ def main() -> int:
     client = Anthropic()
     seeds = load_seeds()
     done = load_cache()
-    print(f"[expand] 시드 {len(seeds)}건 · 이미 처리 {len(done)}건", file=sys.stderr)
+    print(
+        f"[expand] 시드 {len(seeds)}건 · 이미 처리 {len(done)}건 "
+        f"· pass={SYNTH_PASS} · 변형={VARIATIONS_PER_SEED}",
+        file=sys.stderr,
+    )
 
-    # 이어 쓰기 — 이미 처리된 시드는 스킵.
+    # 이어 쓰기 — 이미 처리된 (seed_id, pass) 는 스킵.
     out_mode = "a" if CACHE_PATH.exists() else "w"
     cache_f = CACHE_PATH.open(out_mode, encoding="utf-8")
 
     total = 0
     for i, seed in enumerate(seeds, 1):
         sid = seed["id"]
-        if sid in done:
-            print(f"[expand] ({i}/{len(seeds)}) {sid} 스킵 (캐시)", file=sys.stderr)
+        if (sid, SYNTH_PASS) in done:
+            print(f"[expand] ({i}/{len(seeds)}) {sid} 스킵 (pass={SYNTH_PASS} 이미 있음)", file=sys.stderr)
             continue
 
         try:
@@ -161,17 +185,18 @@ def main() -> int:
         for case in cases:
             case["_seed_id"] = sid
             case["_category"] = seed["category"]
+            case["_pass"] = SYNTH_PASS
             cache_f.write(json.dumps(case, ensure_ascii=False) + "\n")
         cache_f.flush()
         total += len(cases)
-        print(f"[expand] ({i}/{len(seeds)}) {sid} → {len(cases)}건", file=sys.stderr)
+        print(f"[expand] ({i}/{len(seeds)}) {sid} → {len(cases)}건 (pass={SYNTH_PASS})", file=sys.stderr)
         time.sleep(0.5)  # rate limit 여유
 
     cache_f.close()
 
     # 캐시 파일을 최종 산출물로 복사 (동일 내용).
     OUT_PATH.write_text(CACHE_PATH.read_text(encoding="utf-8"), encoding="utf-8")
-    print(f"[expand] 총 {total}건 신규 → {OUT_PATH} (누적)")
+    print(f"[expand] 총 {total}건 신규 → {OUT_PATH} (누적 · pass={SYNTH_PASS})")
     return 0
 
 
