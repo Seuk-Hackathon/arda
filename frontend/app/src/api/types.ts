@@ -169,6 +169,10 @@ export interface ApplicationDetail {
   doc_score_detail?: DocScoreDetail | null
   doc_decision?: 'pass' | 'reject' | 'hold' | null
   decision_source?: 'agent' | 'human' | null
+  /** 면접 자동 점수 · 종합 점수 · 등급 (백엔드 get_application 이 update 로 붙임) */
+  interview_ai_score?: number | null
+  final_score?: number | null
+  grade?: string | null
 }
 
 export interface Note {
@@ -361,6 +365,20 @@ export interface InterviewSessionDetail extends InterviewSession {
   findings: InterviewFinding[]
   /** 서류 대조 스위치가 켜져 있는가 — 꺼진 것과 아직 없는 것을 가른다 (2026-09-11) */
   findings_enabled?: boolean
+  /** 면접 자동 점수 (ADR-0034 · 백엔드 SessionDetailOut). 종합 평가 상세에서 사용. */
+  ai_score?: number | null
+  ai_score_detail?: {
+    answers?: number
+    truth?: number | null
+    truth_n?: number
+    per_question?: Array<{ seq: number; score: number; note?: string }>
+    strengths?: string[]
+    concerns?: string[]
+    weights?: Record<string, number>
+    prompt?: string
+    model?: string
+  } | null
+  scored_at?: string | null
 }
 
 /* ── 제출물 무결성 (ADR-0028) ─────────────────────────────────────

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { summary as summaryApi } from '../api/endpoints'
 import type { SummaryApplicant, SummaryPosting } from '../api/types'
 import styles from './Summary.module.css'
@@ -229,7 +230,7 @@ function ApplicantRow({ applicant: a }: { applicant: SummaryApplicant }) {
   return (
     <tr className={styles.row}>
       <td>
-        <div className={styles.name}>{a.name}</div>
+        <Link to={`/summary/${a.id}`} className={styles.nameLink}>{a.name}</Link>
         <div className={styles.email}>{a.email}</div>
       </td>
       <td className={styles.num}>
