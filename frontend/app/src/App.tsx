@@ -9,7 +9,9 @@ import RequireAuth from './auth/RequireAuth'
 import Login from './pages/Login'
 import Apply from './pages/Apply'
 import Schedule from './pages/Schedule'
-import Interview from './pages/Interview'
+// Interview 컴포넌트는 옛 파일 업로드 흐름 (`./pages/Interview.tsx`).
+// 2026-09-14 부터 `/interview/:token` 라우트는 `InterviewAi` 를 씀. Interview.tsx
+// 파일은 남겨 두었지만 (텍스트 fallback 검토용) import 는 뺐다 — TS 미사용 에러 방지.
 import InterviewRoom from './pages/InterviewRoom'
 import InterviewLive from './pages/InterviewLive'
 import InterviewAi from './pages/InterviewAi'
@@ -51,8 +53,12 @@ export default function App() {
         <Route path="/apply/:token" element={<Apply />} />
         {/* 지원자용 면접 일정 선택 — 메일 링크 착지점 (ADR-0016). 마찬가지로 로그인 밖 */}
         <Route path="/schedule/:token" element={<Schedule />} />
-        {/* 지원자용 AI 면접 — 메일 링크 착지점. 로그인 밖 */}
-        <Route path="/interview/:token" element={<Interview />} />
+        {/* 지원자용 AI 면접 — 메일 링크 착지점. 로그인 밖.
+            2026-09-14: 옛 파일 업로드 흐름 (`<Interview />`) 을 앱(`mobile/lib/screens/
+            interview_screen.dart`) 과 같은 실시간 소켓 흐름 (`<InterviewAi />`) 으로
+            교체. 메일에서 오는 링크가 앱 링크와 같은 UX 를 주게. 옛 Interview 컴포넌트는
+            남겨 두었다 (텍스트 fallback 검토 시 재활용). */}
+        <Route path="/interview/:token" element={<InterviewAi />} />
         {/* 지원자 본인 화면 (ADR-0033) — 이메일 + 생년월일로 들어온다.
             **담당자 로그인(`/login`)과 다른 자리다.** 같은 화면에 두면 지원자가
             담당자 계정으로 들어가려다 막힌다. 토큰도 자리를 나눠 뒀다. */}
