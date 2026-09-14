@@ -3,6 +3,43 @@ import { summary as summaryApi } from '../api/endpoints'
 import type { SummaryApplicant, SummaryPosting } from '../api/types'
 import styles from './Summary.module.css'
 
+/* ai_summary 는 프로덕션 DB 에 JSON 문자열로 저장돼 있다 (요약 프롬프트가 구조화된
+   JSON 을 뱉는다 · ApplicantPanel 참고). `gist` 가 핵심 한 줄이고, 나머지는 강점·경험·
+   우려 등 리스트. 파싱 실패 시엔 그대로 원문을 폴백으로 보여준다. */
+interface ParsedSummary {
+  insufficient?: boolean
+  gist?: string
+  fit?: string[]
+  concerns?: string[]
+  key_skills?: string[]
+  key_experiences?: string[]
+}
+
+function parseAiSummary(raw: string | null): ParsedSummary | null {
+  if (!raw) return null
+  let s = raw.trim()
+  if (s.startsWith('```')) {
+    s = s.replace(/^```[a-zA-Z]*\n?/, '')
+    if (s.endsWith('```')) s = s.slice(0, -3)
+    s = s.trim()
+  }
+  try {
+    const j: unknown = JSON.parse(s)
+    if (j !== null && typeof j === 'object' && !Array.isArray(j)) return j as ParsedSummary
+  } catch { /* JSON 아니면 원문으로 취급 */ }
+  return null
+}
+
+function summaryPreview(raw: string | null): string {
+  const parsed = parseAiSummary(raw)
+  if (parsed) {
+    if (parsed.insufficient) return '자기소개 자료 부족 — 요약 생성 안 됨'
+    if (parsed.gist) return parsed.gist.slice(0, 80) + (parsed.gist.length > 80 ? '…' : '')
+  }
+  if (raw) return raw.slice(0, 80) + (raw.length > 80 ? '…' : '')
+  return '요약 없음'
+}
+
 /* 종합 평가 (2026-09-14) — 공고별 지원자 · 서류 + 면접 자동 점수 · 등급 · 요약.
 
    담당자가 "이 공고의 지원자들이 어느 수준이고 누가 강한가" 를 **한 눈에** 본다.
@@ -121,6 +158,69 @@ function PostingBlock({ posting }: { posting: SummaryPosting }) {
   )
 }
 
+function SummaryDrilldown({ applicant: a }: { applicant: SummaryApplicant }) {
+  /* JSON 파싱 결과 우선 · key_skills·key_experiences 는 파싱했을 때만 옴.
+     서버가 별도로 추린 strengths/concerns 는 면접 결과(interview_ai_score_detail) 에서 온다
+     — 서류 요약과 별개 라 두 쪽 다 있으면 각각 보여준다. */
+  const parsed = parseAiSummary(a.ai_summary)
+  return (
+    <div className={styles.detailsBody}>
+      {parsed?.insufficient && (
+        <p className={styles.summary}>자기소개서·이력서가 부족해 요약을 만들지 못했습니다.</p>
+      )}
+      {parsed?.gist && <p className={styles.summary}>{parsed.gist}</p>}
+      {!parsed && a.ai_summary && <p className={styles.summary}>{a.ai_summary}</p>}
+
+      {(parsed?.key_skills?.length ?? 0) > 0 && (
+        <div className={styles.pointsWrap}>
+          <span className={styles.pointsLabel}>기술</span>
+          <ul className={styles.points}>
+            {parsed!.key_skills!.map((s, i) => <li key={i}>{s}</li>)}
+          </ul>
+        </div>
+      )}
+      {(parsed?.key_experiences?.length ?? 0) > 0 && (
+        <div className={styles.pointsWrap}>
+          <span className={styles.pointsLabel}>경험</span>
+          <ul className={styles.points}>
+            {parsed!.key_experiences!.map((s, i) => <li key={i}>{s}</li>)}
+          </ul>
+        </div>
+      )}
+      {(parsed?.fit?.length ?? 0) > 0 && (
+        <div className={styles.pointsWrap}>
+          <span className={styles.pointsLabel}>적합</span>
+          <ul className={styles.points}>
+            {parsed!.fit!.map((s, i) => <li key={i}>{s}</li>)}
+          </ul>
+        </div>
+      )}
+      {(parsed?.concerns?.length ?? 0) > 0 && (
+        <div className={styles.pointsWrap}>
+          <span className={`${styles.pointsLabel} ${styles.concernLabel}`}>우려 (서류)</span>
+          <ul className={styles.points}>
+            {parsed!.concerns!.map((s, i) => <li key={i}>{s}</li>)}
+          </ul>
+        </div>
+      )}
+
+      {/* 서버가 추린 면접 요약. `strengths`/`concerns` 는 면접 채점의 산출물이라 서류 요약과 별개. */}
+      {a.strengths.length > 0 && (
+        <div className={styles.pointsWrap}>
+          <span className={styles.pointsLabel}>강점 (면접)</span>
+          <ul className={styles.points}>{a.strengths.map((s, i) => <li key={i}>{s}</li>)}</ul>
+        </div>
+      )}
+      {a.concerns.length > 0 && (
+        <div className={styles.pointsWrap}>
+          <span className={`${styles.pointsLabel} ${styles.concernLabel}`}>우려 (면접)</span>
+          <ul className={styles.points}>{a.concerns.map((s, i) => <li key={i}>{s}</li>)}</ul>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function ApplicantRow({ applicant: a }: { applicant: SummaryApplicant }) {
   const stageLabel: Record<string, string> = {
     applied: '접수', screening: '서류', interview: '면접',
@@ -154,29 +254,9 @@ function ApplicantRow({ applicant: a }: { applicant: SummaryApplicant }) {
       <td>
         <details className={styles.details}>
           <summary className={styles.detailsSummary}>
-            {a.ai_summary ? a.ai_summary.slice(0, 80) + (a.ai_summary.length > 80 ? '…' : '') : '요약 없음'}
+            {summaryPreview(a.ai_summary)}
           </summary>
-          <div className={styles.detailsBody}>
-            {a.ai_summary && (
-              <p className={styles.summary}>{a.ai_summary}</p>
-            )}
-            {a.strengths.length > 0 && (
-              <div className={styles.pointsWrap}>
-                <span className={styles.pointsLabel}>강점</span>
-                <ul className={styles.points}>
-                  {a.strengths.map((s, i) => <li key={i}>{s}</li>)}
-                </ul>
-              </div>
-            )}
-            {a.concerns.length > 0 && (
-              <div className={styles.pointsWrap}>
-                <span className={`${styles.pointsLabel} ${styles.concernLabel}`}>우려</span>
-                <ul className={styles.points}>
-                  {a.concerns.map((s, i) => <li key={i}>{s}</li>)}
-                </ul>
-              </div>
-            )}
-          </div>
+          <SummaryDrilldown applicant={a} />
         </details>
       </td>
     </tr>
