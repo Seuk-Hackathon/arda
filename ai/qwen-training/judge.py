@@ -74,9 +74,11 @@ def expected_from_sample(sample: dict[str, Any]) -> dict[str, Any]:
     elif isinstance(content, str):
         text_parts.append(content)
 
-    pending = bool(sample.get("_meta", {}).get("pending_action")) or any(
-        t in WRITE_TOOLS_NEED_CONFIRM for t in tool_names
-    )
+    # 2026-09-14: gold 도구 집합에서 유도하던 부분(`or any(...)`)을 뺐다 — 데이터에
+    # 이미 `_meta.pending_action` 이 있고, 그게 유일한 진실이다. 유도식은 정답이
+    # 없는 도구(update_candidate_stage 등)를 쓰거나 확인이 이미 끝난 뒤의 실행
+    # 응답인 경우까지 확인 문구를 강요해 false negative 를 만들었다.
+    pending = bool(sample.get("_meta", {}).get("pending_action"))
 
     return {
         "tools": tool_names,
@@ -123,11 +125,16 @@ def evaluate_one(sample: dict[str, Any], generated: str) -> dict[str, Any]:
     got_args_by_tool = {tc["name"]: tc.get("arguments") or {} for tc in got_tools_full}
     got_text = extract_text_before_tool(generated)
 
-    # 1. 도구 이름 (hard)
+    # 1. 도구 이름 (hard) · 「먼저 찾고 실행」 허용 (2026-09-14)
+    # 이전엔 집합 완전 일치라 gold 가 send_email 하나일 때 모델이 search_applications
+    # 로 수신자를 먼저 찾고 send_email 을 부르면 오답 처리됐다 — 실제로는 더 안전한
+    # 순서다. 규칙: **기대치가 부분집합**이고 **추가된 도구가 전부 읽기 도구**면 통과.
+    # 추가로 쓰기 도구가 끼면 여전히 실패 (예: 부탁하지도 않은 change_stage 를 붙임).
     exp_set = set(expected["tools"])
     got_set = set(got_tool_names)
-    tool_match = exp_set == got_set
-    hallucinated = got_set - exp_set
+    extras = got_set - exp_set
+    tool_match = exp_set.issubset(got_set) and not (extras & WRITE_TOOLS_NEED_CONFIRM)
+    hallucinated = extras & WRITE_TOOLS_NEED_CONFIRM  # 실제 오답인 것만 신호로 남긴다
     missed = exp_set - got_set
 
     # 2. no-tool 위반 (hard) · gold 가 0개인데 예측이 도구 부름

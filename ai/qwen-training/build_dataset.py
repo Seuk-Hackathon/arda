@@ -132,6 +132,25 @@ def load_interview_seeds() -> list[dict[str, Any]]:
     return samples
 
 
+# Haiku 합성 시 존재하지 않는 도구 이름을 뱉는 경우가 있다 — 여기서 실 도구로
+# 정규화한다 (2026-09-14). 규칙을 코드에 남기는 이유: 재생성해도 같은 오류가
+# 되살아나지 않게. 인자 스키마도 함께 바꿔야 하면 아래 매핑에 함수 형태로 둔다.
+_TOOL_NAME_ALIASES: dict[str, str] = {
+    "update_candidate_stage": "change_stage",
+}
+_TOOL_ARG_ALIASES: dict[str, dict[str, str]] = {
+    # update_candidate_stage 는 인자도 다르게 나왔다 — change_stage 스키마로 맞춘다.
+    "update_candidate_stage": {"candidate_id": "application_id", "new_stage": "to_stage"},
+}
+
+
+def _normalize_tool_call(name: str, args: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """합성 오류(존재하지 않는 도구 이름·인자)를 실 도구 스키마로 되돌린다."""
+    arg_map = _TOOL_ARG_ALIASES.get(name)
+    new_args = {arg_map.get(k, k): v for k, v in (args or {}).items()} if arg_map else args
+    return _TOOL_NAME_ALIASES.get(name, name), new_args
+
+
 def _tool_use_content(tool_calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """도구 호출을 Anthropic tool_use 블록 형식으로 변환.
 
@@ -146,6 +165,7 @@ def _tool_use_content(tool_calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if not name:
             continue
         args = tc.get("input") if tc.get("input") is not None else tc.get("arguments", {})
+        name, args = _normalize_tool_call(name, args)
         out.append({"type": "tool_use", "name": name, "input": args})
     return out
 
@@ -215,8 +235,9 @@ def _real_trace_to_sample(row: dict[str, Any], system_prompt: str) -> dict[str, 
     ]
     for tc in row.get("tool_calls") or []:
         if isinstance(tc, dict) and tc.get("name"):
+            name, args = _normalize_tool_call(tc["name"], tc.get("input") or {})
             assistant_content.append(
-                {"type": "tool_use", "name": tc["name"], "input": tc.get("input", {})},
+                {"type": "tool_use", "name": name, "input": args},
             )
 
     messages.append({"role": "assistant", "content": assistant_content})
