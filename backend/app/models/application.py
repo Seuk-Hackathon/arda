@@ -87,6 +87,16 @@ class Application(Base):
         String(20), nullable=False, server_default=text("'form'")
     )
 
+    # 회사 통합 API 로 온 경우 (ADR-0037):
+    # `external_id` = 회사 쪽 unique id (idempotency 키). NULL 이면 폼·수동 입력.
+    # `integration_client_id` = 어떤 통합 key 로 왔는지. NULL 이면 통합 밖.
+    # UNIQUE (integration_client_id, external_id) 로 같은 통합에서 같은 id 두 번
+    # 못 오게 한다 — 재요청 시 idempotent 동작을 뒷받침한다.
+    external_id: Mapped[str | None] = mapped_column(String(200))
+    integration_client_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("integration_clients.id")
+    )
+
     # 지원 현황 조회 링크 (신-1 지원자 포털). 지원자가 이메일을 넣으면 그때 발급해
     # 메일로 보낸다 — **접수 시점에 만들지 않는다.** 아무도 안 볼 링크를 미리 만들어
     # 두면 유효한 토큰이 계정 수만큼 상시 존재하게 된다.
@@ -123,6 +133,11 @@ class Application(Base):
     __table_args__ = (
         # 중복 지원 방지 (C6)
         UniqueConstraint("job_posting_id", "email", name="uq_applications_posting_email"),
+        # 통합 API idempotency (ADR-0037): 같은 통합에서 같은 external_id 두 번 못 옴
+        UniqueConstraint(
+            "integration_client_id", "external_id",
+            name="uq_applications_integration_external",
+        ),
         CheckConstraint(_in("current_stage", STAGES), name="ck_applications_stage"),
         CheckConstraint(_in("source", APPLICATION_SOURCES), name="ck_applications_source"),
         CheckConstraint(
