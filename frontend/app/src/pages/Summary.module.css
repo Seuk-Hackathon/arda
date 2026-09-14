@@ -1,0 +1,253 @@
+/* 종합 평가 · 담당자용 대시보드 (2026-09-14).
+   토큰은 tokens.css. */
+
+.page {
+  padding: var(--sp-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+}
+
+.head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+
+.title {
+  font-size: var(--font-display);
+  font-weight: 600;
+  color: var(--text);
+  text-shadow: var(--ts-heading);
+  margin: 0;
+}
+
+.sub {
+  font-size: var(--font-sm);
+  color: var(--text-sub);
+  margin: 0;
+}
+
+.state, .err {
+  font-size: var(--font-body);
+  color: var(--text-sub);
+  padding: var(--sp-4);
+  background: var(--bg-elev);
+  border-radius: var(--r-card);
+  border: var(--border-w) solid var(--border-soft);
+}
+
+.err {
+  color: var(--danger);
+}
+
+.postings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+}
+
+.posting {
+  background: var(--bg-elev);
+  border: var(--border-w) solid var(--border);
+  border-radius: var(--r-card);
+  padding: var(--sp-4);
+  box-shadow: var(--shadow-card);
+}
+
+.postingHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+  padding-bottom: var(--sp-3);
+  border-bottom: var(--border-w) solid var(--border-soft);
+  margin-bottom: var(--sp-3);
+}
+
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  background: transparent;
+  border: none;
+  padding: 0;
+  color: inherit;
+  cursor: pointer;
+  font-size: inherit;
+  font-family: inherit;
+}
+
+.toggle:focus-visible {
+  outline: 2px solid var(--accent-text);
+  outline-offset: 2px;
+  border-radius: var(--r-ctl);
+}
+
+.chev {
+  color: var(--text-sub);
+  font-size: var(--font-sm);
+}
+
+.postingTitle {
+  font-size: var(--font-h2);
+  font-weight: 600;
+  color: var(--text);
+  text-shadow: var(--ts-heading);
+}
+
+.badge {
+  font-size: var(--font-caption);
+  padding: 2px var(--sp-2);
+  border-radius: var(--r-pill);
+  background: var(--bg-sunken);
+  color: var(--text-sub);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.status_open { background: var(--ok-soft); color: var(--ok-text); }
+.status_closed { background: var(--bg-sunken); color: var(--text-sub); }
+
+.stats {
+  display: flex;
+  gap: var(--sp-4);
+  font-size: var(--font-sm);
+  color: var(--text-sub);
+}
+
+.stats strong {
+  color: var(--text);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  margin: 0 2px;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-sm);
+}
+
+.table thead th {
+  text-align: left;
+  padding: var(--sp-2) var(--sp-3);
+  color: var(--text-sub);
+  font-weight: 600;
+  border-bottom: var(--border-w) solid var(--border-soft);
+}
+
+.numCol {
+  text-align: right !important;
+  width: 70px;
+}
+
+.row td {
+  padding: var(--sp-3);
+  border-bottom: var(--border-w) solid var(--border-soft);
+  vertical-align: top;
+}
+
+.row:hover {
+  background: var(--sunken-hover);
+}
+
+.name {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.email {
+  font-size: var(--font-caption);
+  color: var(--text-sub);
+}
+
+.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+.dim { color: var(--text-sub); }
+.ok { color: var(--ok-text); }
+.bad { color: var(--danger); }
+
+.grade {
+  display: inline-block;
+  min-width: 24px;
+  text-align: center;
+  padding: 2px 6px;
+  border-radius: var(--r-ctl);
+  font-weight: 700;
+  background: var(--bg-sunken);
+}
+
+.grade_A { background: var(--ok-soft); color: var(--ok-text); }
+.grade_B { background: rgba(96, 165, 250, 0.20); color: var(--accent-blue); }
+.grade_C { background: rgba(251, 191, 36, 0.16); color: var(--warn-text); }
+.grade_D { background: var(--danger-soft); color: var(--danger); }
+
+.details {
+  font-size: var(--font-sm);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.detailsSummary {
+  list-style: none;
+  color: var(--text-sub);
+  line-height: 1.5;
+}
+
+.detailsSummary::-webkit-details-marker {
+  display: none;
+}
+
+.details[open] .detailsSummary {
+  color: var(--text);
+}
+
+.detailsBody {
+  padding-top: var(--sp-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.summary {
+  margin: 0;
+  line-height: 1.55;
+  color: var(--text);
+}
+
+.pointsWrap {
+  display: flex;
+  gap: var(--sp-2);
+  align-items: flex-start;
+}
+
+.pointsLabel {
+  min-width: 40px;
+  font-size: var(--font-caption);
+  font-weight: 700;
+  color: var(--ok-text);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding-top: 2px;
+}
+
+.concernLabel {
+  color: var(--danger);
+}
+
+.points {
+  margin: 0;
+  padding-left: var(--sp-4);
+  line-height: 1.6;
+  color: var(--text-sub);
+}
+
+.points li {
+  margin-bottom: 2px;
+}

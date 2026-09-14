@@ -244,6 +244,7 @@ from app.interview.api.scoring import router as scoring_router  # noqa: E402
 from app.talent.api.users import router as users_router  # noqa: E402
 from app.application.api.agent import router as agent_router  # noqa: E402
 from app.application.api.search import router as search_router  # noqa: E402
+from app.application.api.summary import router as summary_router  # noqa: E402
 
 app.include_router(agent_router)
 app.include_router(applicant_auth_router)
@@ -267,4 +268,5 @@ app.include_router(public_router)
 app.include_router(schedules_router)
 app.include_router(scoring_router)
 app.include_router(search_router)
+app.include_router(summary_router)
 app.include_router(users_router)

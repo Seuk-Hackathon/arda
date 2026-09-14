@@ -13,6 +13,7 @@ import type {
   SearchResult,
   StageChangeOut,
   Stage,
+  SummaryPosting,
   TokenResponse,
   User,
   UserItem,
@@ -120,6 +121,13 @@ export const applications = {
     })
     return res.total ?? 0
   },
+}
+
+export const summary = {
+  /* 종합 평가 (2026-09-14): 공고별 지원자 · 서류 + 면접 자동 점수 · 등급 · 요약.
+     상세와 달리 대시보드성 · 한 번에 모든 공고 아래 지원자를 준다. */
+  list: (signal?: AbortSignal) =>
+    api.get<SummaryPosting[]>('/summary', { signal }),
 }
 
 export const schedules = {

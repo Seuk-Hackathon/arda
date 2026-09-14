@@ -50,6 +50,7 @@ const NAV = [
   { to: '/applicants', label: '지원자', icon: 'applicants' },
   { to: '/calendar', label: '캘린더', icon: 'calendar' },
   { to: '/evaluations', label: '평가 현황', icon: 'evaluations' },
+  { to: '/summary', label: '종합 평가', icon: 'evaluations' },
   /* 설정은 우측 상단 계정 메뉴로 옮겼다 (2026-09-05) — 내비에는 일하는 화면만
      남긴다. 개인 설정 하나가 업무 화면들 사이에 껴 있던 것이 어색했다. */
 ] as const

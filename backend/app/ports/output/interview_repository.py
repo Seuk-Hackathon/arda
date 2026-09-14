@@ -32,3 +32,11 @@ class InterviewRepository(ABC):
         끝난 것 하나**다. `ended_at` 이 NULL 인 경우가 끼면 id 역순으로 갈라진다.
         """
         ...
+
+    @abstractmethod
+    def latest_ai_score_detail_for_application(self, application_id: int) -> dict | None:
+        """지원자의 가장 최근 끝난 면접의 AI 점수 **상세** (per_question · 강점 ·
+        우려사항 · 가중치 등). 종합뷰(`/applicants/:id`) 가 요약을 그리는 재료 —
+        점수 하나로는 담당자 판단을 못 돕는다.
+        """
+        ...
