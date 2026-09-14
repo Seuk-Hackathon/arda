@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ApiError, getApplicantToken, setApplicantToken } from '../api/client'
+import { Navigate, useNavigate } from 'react-router-dom'
+import { getApplicantToken, setApplicantToken } from '../api/client'
 import { applicantAuth } from '../api/endpoints'
 import type { ApplicantMe, MyApplication, MyTokenLink } from '../api/types'
 import BrandMark from '../components/BrandMark'
@@ -336,12 +337,9 @@ export default function MyApplications() {
     if (previewWanted() && PREVIEW !== null) return { kind: 'ready', data: PREVIEW }
     return getApplicantToken() ? { kind: 'loading' } : { kind: 'login' }
   })
-  const [email, setEmail] = useState('')
-  const [birth, setBirth] = useState('')
-  const [pending, setPending] = useState(false)
-  const [error, setError] = useState<string | null>(null)
   /* 지금 펼친 지원. null 이면 첫 번째 — 목록이 오기 전에는 고를 수가 없다 */
   const [openId, setOpenId] = useState<number | null>(null)
+  const navigate = useNavigate()
   const [menu, setMenu] = useState(false)
   /* 설정 — 계정 메뉴에서 연다. 갈 곳이 여기 하나라 라우트를 따로 파지 않고
      이 화면 위에 덮는다(담당자 쪽 Settings 는 사이드바가 있어 라우트다) */
@@ -393,36 +391,28 @@ export default function MyApplications() {
     }
   }, [menu])
 
-  async function submit(e: React.FormEvent) {
-    e.preventDefault()
-    setPending(true)
-    setError(null)
-    try {
-      const res = await applicantAuth.login(email.trim(), birth.trim())
-      setApplicantToken(res.access_token)
-      setView({ kind: 'loading' })
-      await load()
-    } catch (err) {
-      /* **사유를 지어내지 않는다.** 서버가 없는 이메일과 틀린 생년월일을 구별해
-         주지 않는 것이 설계다 — 화면에서 "그런 이메일이 없습니다"라고 쓰면
-         서버가 안 하기로 한 일을 화면이 대신 해 버린다. */
-      setError(err instanceof ApiError ? err.message : '잠시 후 다시 시도해 주세요')
-    } finally {
-      setPending(false)
-    }
-  }
-
+  /* **나가면 /login 으로 간다** — 들어온 문과 같은 자리다 */
   function logout() {
     setApplicantToken(null)
-    setEmail('')
-    setBirth('')
     setMenu(false)
     setSettings(false)
-    setView({ kind: 'login' })
+    navigate('/login?as=applicant', { replace: true })
   }
 
-  /* 로그인·로딩은 **좁다.** 폼까지 1040px 로 펴면 칸 하나가 화면을 가로지른다 */
-  if (view.kind !== 'ready') {
+  /* **로그인 화면은 /login 하나다** (2026-09-14).
+
+     전에는 여기에도 폼이 따로 있었다. /login 의 지원자 칸으로 들어왔는데
+     로그아웃하면 생김새가 다른 폼이 떠서, **들어온 문과 나가는 문이 달랐다.**
+     토큰이 없으면 /login 으로 보낸다 — `?as=applicant` 로 그쪽이 지원자 칸을
+     펴 놓게 한다.
+
+     로딩만 여기서 그린다. 토큰이 살아 있는 동안의 짧은 사이라 화면을 옮기면
+     오히려 깜빡인다. */
+  if (view.kind === 'login') {
+    return <Navigate to="/login?as=applicant" replace />
+  }
+
+  if (view.kind === 'loading') {
     return (
       <div className={styles.page}>
         <main className={styles.column}>
@@ -430,70 +420,14 @@ export default function MyApplications() {
             <BrandMark size={26} halo className={styles.logoMark} />
             Arda
           </h1>
-
-          {view.kind === 'login' && (
-            <form className={styles.card} onSubmit={submit}>
-              <h2 className={styles.cardTitle}>지원 현황 조회</h2>
-              <p className={styles.help}>
-                지원할 때 쓰신 이메일과 생년월일로 확인하실 수 있습니다.
-              </p>
-
-              <label className={styles.label} htmlFor="ap-email">이메일</label>
-              <input
-                id="ap-email"
-                className={styles.input}
-                type="email"
-                autoComplete="email"
-                inputMode="email"
-                placeholder="지원할 때 쓰신 이메일"
-                value={email}
-                disabled={pending}
-                onChange={(e) => setEmail(e.target.value)}
-              />
-
-              <label className={styles.label} htmlFor="ap-birth">생년월일</label>
-              <input
-                id="ap-birth"
-                className={styles.input}
-                /* 숫자 8자리다. 폰에서 숫자 자판이 바로 뜨게 inputMode 를 준다 —
-                   type=number 는 앞자리 0 이 사라져서 못 쓴다. */
-                inputMode="numeric"
-                maxLength={8}
-                placeholder="19980412"
-                value={birth}
-                disabled={pending}
-                onChange={(e) => setBirth(e.target.value.replace(/\D/g, ''))}
-              />
-
-              {error && <p className={styles.error} role="alert">{error}</p>}
-
-              <button
-                type="submit"
-                className="btn btn-primary"
-                disabled={pending || !email.trim() || birth.length !== 8}
-              >
-                {pending ? '확인 중…' : '조회하기'}
-              </button>
-
-              {/* 담당자가 잘못 들어왔을 때 나갈 길. 반대로 지원자가 담당자
-                  로그인으로 흘러가지 않도록 문구를 분명히 둔다. */}
-              <p className={styles.foot}>
-                채용 담당자이신가요? <a className={styles.link} href="/login">담당자 로그인</a>
-              </p>
-            </form>
-          )}
-
-          {view.kind === 'loading' && (
-            <div className={styles.card} aria-busy="true">
-              <div className={styles.skeleton} style={{ width: '50%' }} />
-              <div className={styles.skeleton} />
-            </div>
-          )}
+          <div className={styles.card} aria-busy="true">
+            <div className={styles.skeleton} style={{ width: '50%' }} />
+            <div className={styles.skeleton} />
+          </div>
         </main>
       </div>
     )
   }
-
   const me = view.data
   const apps = me.applications
   const live = apps.filter((a) => !isOver(a.stage_label))
