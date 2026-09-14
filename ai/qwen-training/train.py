@@ -32,8 +32,10 @@ ROOT = Path(__file__).parent
 # ADR-0032 는 ollama `qwen3:8b` (Q4) 로 표기 · HF 상 대응은 `Qwen/Qwen3-8B` (Instruct 접미어 없음)
 MODEL_ID = os.getenv("MODEL_ID", "Qwen/Qwen3-8B")
 OUTPUT_DIR = ROOT / "output"
-# T4 16GB (G4dn) 는 4096 여유 · median 4287 커버 · 4060 8GB 였다면 2048 · 환경변수로 오버라이드
-MAX_SEQ_LENGTH = int(os.getenv("MAX_SEQ_LENGTH", "4096"))
+# T4 16GB · 실측(2026-09-14 v3) 4096 OOM. 2048 로 내림. 시스템 프롬프트 ~3000 토큰
+# 이라 왼쪽 자르기 필요 (`truncation_side="left"`) — 안 그러면 assistant 응답이
+# 통째로 잘려나가 학습 대상이 0이 된다 (실측: 846/706003 = 0.1%).
+MAX_SEQ_LENGTH = int(os.getenv("MAX_SEQ_LENGTH", "2048"))
 NUM_EPOCHS = int(os.getenv("NUM_EPOCHS", "3"))
 LEARNING_RATE = float(os.getenv("LEARNING_RATE", "2e-4"))
 BATCH_SIZE = int(os.getenv("BATCH_SIZE", "1"))
@@ -166,6 +168,10 @@ def main() -> int:
     tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, trust_remote_code=True)
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token = tokenizer.eos_token
+    # 왼쪽 자르기 — 시스템 프롬프트(~3000 토큰)가 max_length(2048) 를 넘길 때
+    # 앞 부분을 자른다. 뒷쪽에 assistant 응답이 있으므로 살려야 한다. 오른쪽 자르기
+    # (기본) 로 두면 assistant 가 통째로 사라져 labels=-100 뿐이라 학습이 안 된다.
+    tokenizer.truncation_side = "left"
 
     model = AutoModelForCausalLM.from_pretrained(
         MODEL_ID,
