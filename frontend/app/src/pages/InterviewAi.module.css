@@ -1,10 +1,39 @@
 /* AI 면접 — 지원자 화면. **폰 세로가 기본**이다.
-   토큰은 전부 tokens.css. */
+   토큰은 전부 tokens.css.
+
+   2026-09-14: 모바일 앱 `interview_screen.dart` 의 위젯 트리와 맞췄다:
+   상단 바 → 공고명 → "이름님" → 3:4 카메라 → 상태 → 질문 → 액션.
+   두 채널 UX 일치. 토큰은 이미 공유돼 있어 값이 아니라 조합만 정리한 것. */
 
 .page {
   /* `100vh` 가 아니라 `dvh` — 폰은 주소창이 접히며 vh 가 바뀌어 아래가 잘린다 */
-  height: 100dvh;
+  min-height: 100dvh;
   background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+}
+
+/* 상단 바 · 앱 AppTopBar 대응 · 제목만. 뒤로가기는 안 넣는다 (돌아갈 수 없는 흐름). */
+.topBar {
+  display: flex;
+  align-items: center;
+  padding: var(--sp-4);
+  border-bottom: var(--border-w) solid var(--border-soft);
+  background: var(--bg-chrome);
+}
+
+.title {
+  font-size: var(--font-h2);
+  font-weight: 600;
+  color: var(--text);
+  text-shadow: var(--ts-heading);
+  margin: 0;
+}
+
+/* 본문 · 앱 ListView 대응. gap 은 앱 s4 (16px). */
+.body {
+  flex: 1;
   display: flex;
   flex-direction: column;
   gap: var(--sp-4);
@@ -12,25 +41,74 @@
   box-sizing: border-box;
 }
 
-.bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--sp-3);
+/* 공고명 · 앱: text-sub · font-sm */
+.posting {
+  font-size: var(--font-sm);
+  color: var(--text-sub);
+  margin: 0;
+  word-break: keep-all;
 }
 
-.logo {
+/* "이름님" · 앱: h2 · semibold · heading shadow · s1 gap 위 */
+.name {
   font-size: var(--font-h2);
-  font-weight: 700;
+  font-weight: 600;
   color: var(--text);
   text-shadow: var(--ts-heading);
   margin: 0;
+  margin-top: calc(var(--sp-1) * -3); /* 공고명과 s1 간격 (기본 gap 은 s4 이니 당김) */
+  padding-top: var(--sp-1);
+  word-break: keep-all;
 }
 
-.seed {
-  color: var(--accent-text);
+/* 카메라 상자 · 앱 _CameraBox 대응 · 3:4 비율 · 좌상단 LIVE 뱃지 */
+.cameraBox {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  max-height: 50vh; /* 폰이 아닌 큰 화면에서 카메라가 너무 커지지 않게 */
+  border-radius: var(--r-card);
+  overflow: hidden;
+  background: var(--bg-sunken);
+  border: var(--border-w) solid var(--border);
 }
 
+/* 자기 모습. cover 로 채우고 좌우를 뒤집는다(화면에만). */
+.cam {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  transform: scaleX(-1);
+}
+
+/* LIVE 뱃지 · 앱 _LiveDot 대응. 좌상단 s3 (12px) 여백. */
+.liveDot {
+  position: absolute;
+  top: var(--sp-3);
+  left: var(--sp-3);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  padding: 4px 8px;
+  border-radius: var(--r-pill);
+  background: rgba(15, 20, 35, 0.72);
+  color: var(--text);
+  font-size: var(--font-caption);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+}
+
+.liveDotPulse {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ok);
+  animation: pulse 1.2s ease-in-out infinite alternate;
+}
+
+/* 진행 상태 (아이콘 + 문구). 앱 `_Live` 상단 상태 표시. */
 .state {
   display: flex;
   align-items: center;
@@ -40,26 +118,19 @@
   white-space: nowrap;
 }
 
-/* 말하는 중에만 뛴다. **빨강을 쓰지 않는다** — 녹화 표시가 아니라
-   "듣고 있다"는 신호다. 빨강이면 감시받는 느낌이 된다. */
-.dot {
+.stateDot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
   background: var(--text-sub);
 }
 
-.dotLive {
+.stateDotLive {
   background: var(--ok);
   animation: pulse 1.2s ease-in-out infinite alternate;
 }
 
-@keyframes pulse {
-  from { opacity: 1; }
-  to { opacity: 0.35; }
-}
-
-/* 질문 자리. 화면의 주인공이라 남는 세로를 여기가 먹는다. */
+/* 질문 자리. 화면의 주인공 — 남는 세로를 여기가 먹는다. */
 .askWrap {
   flex: 1;
   min-height: 0;
@@ -77,7 +148,8 @@
   margin: 0;
 }
 
-/* 폰에서 팔을 뻗은 거리에서도 읽혀야 한다 — 본문 크기로는 작다. */
+/* 폰에서 팔을 뻗은 거리에서도 읽혀야 한다 — 본문 크기로는 작다.
+   앱 h2 (18) 보다 큰 h1 (22) 로 · 질문이 화면 주인공이라. */
 .ask {
   font-size: var(--font-h1);
   font-weight: 700;
@@ -103,22 +175,10 @@
   word-break: keep-all;
 }
 
-/* 자기 모습. 질문보다 작게 — 보는 것은 질문이고, 이건 카메라가 켜졌다는 확인이다.
-   `cover` 로 채우고 좌우를 뒤집는다(화면에만, 보내는 프레임은 안 뒤집힌다). */
-.cam {
-  width: 100%;
-  max-height: 30vh;
-  aspect-ratio: 4 / 3;
-  object-fit: cover;
-  border-radius: var(--r-card);
-  border: var(--border-w) solid var(--border);
-  background: var(--bg-sunken);
-  transform: scaleX(-1);
-}
-
 .actions {
   display: flex;
   justify-content: center;
+  padding-bottom: var(--sp-2);
 }
 
 /* 폰에서 누르기 좋게 (05-design §9 터치 44px) */
@@ -127,6 +187,12 @@
   min-width: 160px;
 }
 
+@keyframes pulse {
+  from { opacity: 1; }
+  to { opacity: 0.35; }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .dotLive { animation: none; }
+  .stateDotLive,
+  .liveDotPulse { animation: none; }
 }
