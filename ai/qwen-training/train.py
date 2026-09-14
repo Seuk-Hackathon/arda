@@ -17,6 +17,10 @@ import sys
 from pathlib import Path
 from typing import Any
 
+# CUDA 파편화 완화 — T4 16GB 에서 큰 activation 연속 블록 할당 실패를 줄인다
+# (에러 메시지가 안내한 튜닝). torch import **이전에** 설정해야 유효.
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
 import torch
 from datasets import Dataset
 from peft import LoraConfig, prepare_model_for_kbit_training
@@ -32,10 +36,12 @@ ROOT = Path(__file__).parent
 # ADR-0032 는 ollama `qwen3:8b` (Q4) 로 표기 · HF 상 대응은 `Qwen/Qwen3-8B` (Instruct 접미어 없음)
 MODEL_ID = os.getenv("MODEL_ID", "Qwen/Qwen3-8B")
 OUTPUT_DIR = ROOT / "output"
-# T4 16GB · 실측(2026-09-14 v3) 4096 OOM. 2048 로 내림. 시스템 프롬프트 ~3000 토큰
-# 이라 왼쪽 자르기 필요 (`truncation_side="left"`) — 안 그러면 assistant 응답이
-# 통째로 잘려나가 학습 대상이 0이 된다 (실측: 846/706003 = 0.1%).
-MAX_SEQ_LENGTH = int(os.getenv("MAX_SEQ_LENGTH", "2048"))
+# T4 16GB · 실측 4096 OOM (v3) · 2048 도 OOM (v4). 1024 로 내림. 시스템 프롬프트가
+# 잘리는 부분이 커지지만 assistant 응답은 살아 있다 (`truncation_side="left"`).
+# 실측: 09-11 판 4096 성공 → 그때는 trl 이 다른 경로였을 것. 지금 SFTTrainer 는
+# `DataCollatorForSeq2Seq` 로 패딩하고 pre-tokenized 데이터를 쓰는 조합이라 메모리
+# 프로파일이 다르다. 1024 에서 여유 확인 후 필요하면 1536 시도.
+MAX_SEQ_LENGTH = int(os.getenv("MAX_SEQ_LENGTH", "1024"))
 NUM_EPOCHS = int(os.getenv("NUM_EPOCHS", "3"))
 LEARNING_RATE = float(os.getenv("LEARNING_RATE", "2e-4"))
 BATCH_SIZE = int(os.getenv("BATCH_SIZE", "1"))
