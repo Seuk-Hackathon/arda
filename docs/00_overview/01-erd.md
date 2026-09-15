@@ -130,6 +130,7 @@ UNIQUE(job_posting_id, user_id).
 | email | varchar(255) | NOT NULL | |
 | phone | varchar(20) | NOT NULL | |
 | birth_date | date | | 생년월일. **앱 로그인의 비밀번호가 된다** (이메일 + 8자리, [ADR-0033](../03_decision/0033-지원자-앱-로그인.md), 2026-09-08, 리비전 `0012`). 해시하지 않는다 — 탐색 공간이 만 단위라 해시를 떠도 대조로 뚫리고, 방어는 **시도 횟수 제한**이 한다. **NULL 이면 그 사람은 로그인할 수 없다** — 옛 지원서가 여기 해당하고, 그때는 막는 쪽으로 떨어진다 |
+| gender | varchar(10) | CHECK (male\|female\|other) | 성별. 면접 findings 시스템이 나이·성별 불일치를 감지할 때 쓴다 (2026-09-15, 리비전 `0022`). NULL = 미입력 |
 | education | varchar(100) | | 최종 학력 |
 | career_years | smallint | | 경력 연차 (신입=0) |
 | skills | text[] | | 기술 태그. 예: `{Python,FastAPI}` |

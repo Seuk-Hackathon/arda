@@ -70,7 +70,7 @@ MAX_FINDINGS = 8
 # 답변 하나에서 낼 수 있는 대조. 답변 하나가 닿는 주장은 많아야 두셋이다.
 TURN_MAX_FINDINGS = 3
 VERDICTS = ("consistent", "inconsistent", "unverified")
-SOURCES = ("self_intro", "resume")
+SOURCES = ("self_intro", "resume", "profile")
 
 # 담당자 화면에 나갈 말. **여기서 한 번만 정한다** — 화면과 프롬프트와 문서가
 # 저마다 다른 낱말을 쓰면 같은 값이 세 이름으로 불린다.
@@ -98,7 +98,7 @@ _FINDINGS_SCHEMA = {
             "items": {
                 "type": "object",
                 "properties": {
-                    "claim_source": {"type": "string", "enum": list(SOURCES)},
+                    "claim_source": {"type": "string", "enum": list(SOURCES)},  # self_intro | resume | profile
                     "claim_text": {"type": "string"},
                     "answer_text": {"type": "string"},
                     "verdict": {"type": "string", "enum": list(VERDICTS)},
@@ -164,17 +164,20 @@ def _generate(
         logger.error("대조 생성 불가: %s", reason)
         return None
 
+    profile = (sources.get("profile") or "").strip()
     prompt_text, tag = render(
         prompt_name,
         cover_letter_text=cover or "(없음)",
         resume_text=resume or "(없음)",
         transcript_text=transcript,
+        profile_text=profile or "(없음)",
     )
     schema = _FINDINGS_SCHEMA if backend.supports_structured_output else None
     result = backend.complete(prompt=prompt_text, max_tokens=max_tokens, json_schema=schema)
 
     findings = _parse_findings(
-        result.text or "", cover=cover, resume=resume, transcript=transcript
+        result.text or "", cover=cover, resume=resume, transcript=transcript,
+        profile=profile,
     )
     if findings is None:
         # 2026-09-14: 실측상 이 경로가 너무 자주 나온다 (222 turns 중 findings_turn 5개
@@ -214,7 +217,7 @@ def generate_turn_findings(sources: dict[str, str], transcript: str) -> list[dic
 
 
 def _parse_findings(
-    raw: str, cover: str, resume: str, transcript: str
+    raw: str, cover: str, resume: str, transcript: str, profile: str = ""
 ) -> list[dict] | None:
     """`{"findings": [...]}` 를 꺼내 정제한다. 못 읽으면 None.
 
@@ -268,11 +271,17 @@ def _parse_findings(
 
         # 주장이 어느 서류에서 왔는지는 **모델 말이 아니라 원문으로** 정한다.
         # 자소서 문장을 이력서라고 적어 보내면 면접관이 엉뚱한 쪽을 뒤진다.
+        # profile 소스는 fingerprint 대신 모델이 지정한 source 를 그대로 쓴다 —
+        # "만 나이: 51세" 같은 프로필 라인은 원문 대조가 의미 없다.
         claim_fp = quoted(claim)
-        source = next((name for name, src in fps.items() if src and claim_fp in src), None)
-        if source is None:
-            logger.info("서류에 없는 인용이라 버린다: %r", claim[:40])
-            continue
+        stated_source = str(item.get("claim_source", "")).strip()
+        if stated_source == "profile":
+            source = "profile"
+        else:
+            source = next((name for name, src in fps.items() if src and claim_fp in src), None)
+            if source is None:
+                logger.info("서류에 없는 인용이라 버린다: %r", claim[:40])
+                continue
         if claim_fp in seen:
             continue
         seen.add(claim_fp)

@@ -33,6 +33,7 @@ from app.models.constants import (
     EMAIL_LOG_STAGES,
     EMAIL_STATUSES,
     FILE_KINDS,
+    GENDERS,
     STAGES,
     _in,
 )
@@ -59,6 +60,7 @@ class Application(Base):
     # 앱 로그인의 비밀번호 자리다 (이메일 + 생년월일 8자리, ADR-0033).
     # **값이 없으면 로그인이 안 된다** — 옛 지원서는 비워 두고 막는 쪽으로 떨어진다.
     birth_date: Mapped[date | None] = mapped_column(Date)
+    gender: Mapped[str | None] = mapped_column(String(10))
     education: Mapped[str | None] = mapped_column(String(100))
     career_years: Mapped[int | None] = mapped_column(SmallInteger)
     skills: Mapped[list[str] | None] = mapped_column(ARRAY(String))
@@ -140,6 +142,10 @@ class Application(Base):
         ),
         CheckConstraint(_in("current_stage", STAGES), name="ck_applications_stage"),
         CheckConstraint(_in("source", APPLICATION_SOURCES), name="ck_applications_source"),
+        CheckConstraint(
+            "gender IS NULL OR " + _in("gender", GENDERS),
+            name="ck_applications_gender",
+        ),
         CheckConstraint(
             "doc_decision IS NULL OR " + _in("doc_decision", DOC_DECISIONS),
             name="ck_applications_doc_decision",

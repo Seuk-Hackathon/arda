@@ -21,6 +21,7 @@ APPLICATION_SOURCES = (
     "integration", "email", "saramin", "jobkorea", "wanted",
 )
 FILE_KINDS = ("resume", "cover_letter")
+GENDERS = ("male", "female", "other")
 EMAIL_STATUSES = ("queued", "sent", "failed")
 PROPOSAL_STATUSES = ("proposed", "confirmed", "expired", "canceled")
 DOC_TYPES = FILE_KINDS + ("self_intro",)
