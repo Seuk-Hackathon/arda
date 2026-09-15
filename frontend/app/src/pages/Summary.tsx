@@ -97,7 +97,10 @@ export default function Summary() {
 }
 
 function PostingBlock({ posting }: { posting: SummaryPosting }) {
-  const [expanded, setExpanded] = useState(true)
+  /* 공고 블록은 **접힌 채로** 시작한다 (2026-09-15 팀장 요청). 공고가 여럿이면 다 펼쳐진
+     표가 한 화면을 넘겨 어느 공고를 보고 있는지 잃는다 — 머리(지원자·평가 완료·평균)만
+     훑고 볼 공고를 골라 연다. 지원자 행 안의 상세(<details>)는 원래부터 접혀 있다. */
+  const [expanded, setExpanded] = useState(false)
 
   /* 2026-09-14: 점수가 높은 사람이 위로, 불합격은 맨 아래. 팀에서 "합격 후보를 먼저
      본다" 는 요구에 맞춤. 정렬 키:
