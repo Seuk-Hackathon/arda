@@ -277,6 +277,11 @@ export default function InterviewRoom() {
     interviews
       .detail(id, ac.signal)
       .then(async (d) => {
+        /* AI 면접 세션이면 담당자는 판정 화면으로 보낸다 */
+        if (d.url && d.url.includes('/interview/') && !d.url.includes('/interview-live/')) {
+          navigate(`/interview-watch/${id}`, { replace: true })
+          return
+        }
         setDetail(d)
         try {
           const app = await applications.detail(d.application_id, ac.signal)
