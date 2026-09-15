@@ -48,9 +48,7 @@ from interview_ws import (
     score,
     submit_answer,
     transcribe_async,
-    says_done,
     strip_end_phrase,
-    voice_seconds,
     warm_stt,
 )
 
@@ -181,11 +179,6 @@ async def analyze(video: UploadFile | None = None):
 # 보내면서 매번 JSON 머리말을 붙이는 것보다 싸다.
 KIND_AUDIO = 0x01
 KIND_VIDEO = 0x02
-
-# 연결이 끊긴 뒤 남은 전사를 마저 끝내며 기다리는 시간. 오디오는 메모리에만 있어서
-# 여기서 포기하면 그 답변은 영영 없다. 그렇다고 무한정 잡고 있으면 워커 자리가
-# 안 돌아온다 — 긴 답변 하나를 CPU 로 끝낼 만큼만 준다.
-DRAIN_TIMEOUT_SEC = float(os.getenv("DRAIN_TIMEOUT_SEC", "180"))
 
 # 목소리 대조를 끄는 스위치. **켜는 스위치가 아니다** — 모델 파일이 있으면 돈다.
 # 이건 잘못 잘랐다는 신고가 들어왔을 때 배포를 기다리지 않고 끌 자리다.
@@ -345,7 +338,6 @@ async def interview(ws: WebSocket, token: str):
             }
         )
 
-        pump = asyncio.create_task(_transcribe_pump(client, session))
         try:
             while True:
                 msg = await ws.receive()
@@ -355,8 +347,8 @@ async def interview(ws: WebSocket, token: str):
                     # 잇는 중" 이 반복됐는데 서버 로그에 아무것도 없어 누가 끊었는지 못 갈랐다.
                     # 1000·1001 은 앱이 닫은 것, 1006 은 망이 끊긴 것, 1011 은 서버가 버거운 것
                     logger.info(
-                        "면접 연결 끊김: token=%s code=%s 남은 전사 %d개",
-                        token[:8], msg.get("code"), session.pending.qsize(),
+                        "면접 연결 끊김: token=%s code=%s",
+                        token[:8], msg.get("code"),
                     )
                     break
 
@@ -375,18 +367,6 @@ async def interview(ws: WebSocket, token: str):
             logger.info("면접 연결 종료: token=%s", token[:8])
         except Exception:
             logger.exception("면접 처리 중 오류: token=%s", token[:8])
-        finally:
-            # **끊긴 뒤에도 남은 전사는 마저 저장한다.** 오디오는 메모리에만 있어서
-            # 여기서 버리면 그 답변은 영영 없다. 다만 무한정 붙잡지는 않는다 —
-            # 못 끝내면 그 칸은 빈칸으로 남고, 담당자가 보고 판단한다.
-            try:
-                await asyncio.wait_for(session.pending.join(), timeout=DRAIN_TIMEOUT_SEC)
-            except (TimeoutError, asyncio.TimeoutError):
-                logger.warning(
-                    "남은 전사를 %.0f초 안에 못 끝냈다: token=%s",
-                    DRAIN_TIMEOUT_SEC, token[:8],
-                )
-            pump.cancel()
 
 
 async def _on_binary(ws, client, session: InterviewSession, data: bytes) -> None:
@@ -439,41 +419,14 @@ async def _on_binary(ws, client, session: InterviewSession, data: bytes) -> None
         await ws.send_json({"type": "listening"})
         return
     if event == "limit":
-        # 답변 하나가 상한(MAX_ANSWER_SEC)을 넘었다 — 버튼도 "이상입니다" 도 없으니 끊는다
+        # 답변 하나가 상한(MAX_ANSWER_SEC)을 넘었다 — 버튼 없이 이어지니 여기서 끊는다
         if not session.finishing:
             iw.ANSWER_STATS["by_limit"] += 1
             await _finish_answer(ws, client, session)
         return
-    if event != "end":
-        return
-    # **말이 멈춘 것만으로는 넘기지 않는다** (2026-09-11). 3초 침묵으로 넘기던 때는
-    # 문장 사이에 쉰 순간 답이 반토막 나고, 폰 스피커 소리가 질문을 넘겼다. 끝부분에
-    # "이상입니다" 가 있는지만 뒤에서 본다 — 보는 동안에도 소리는 계속 받는다.
-    if session.end_check is None or session.end_check.done():
-        session.end_check = asyncio.create_task(_check_end_phrase(ws, client, session))
-
-
-async def _check_end_phrase(ws, client, session: InterviewSession) -> None:
-    """멈춘 순간의 끝부분에 "이상입니다" 가 있으면 그 답변을 끝낸다."""
-    iw.ANSWER_STATS["pause_checks"] += 1
-    seq = session.current_seq()
-    try:
-        done = await asyncio.to_thread(says_done, session.tail(iw.END_TAIL_SEC))
-    except Exception:
-        logger.exception("'이상입니다' 확인 실패: token=%s", session.token[:8])
-        return
-    if not done:
-        return
-    # 확인하는 사이 버튼으로 이미 넘어갔으면 두 번 넘기지 않는다
-    if session.finishing or session.current_seq() != seq or not session.audio:
-        return
-    iw.ANSWER_STATS["by_phrase"] += 1
-    logger.info("'이상입니다' 로 답변을 끝낸다: token=%s seq=%s", session.token[:8], seq)
-    session.detector.reset()
-    try:
-        await _finish_answer(ws, client, session)
-    except Exception:
-        logger.exception("'이상입니다' 뒤 답변 처리 실패: token=%s", session.token[:8])
+    # 멈춤('end')으로는 아무것도 하지 않는다 (2026-09-15). 09-11 판은 여기서 끝부분을
+    # 받아써 "이상입니다" 를 찾았는데, 그 전사가 무음에 "이상입니다" 를 지어내 답변을
+    # 강제로 끊었다(세션 77). 답변 끝은 [답변 완료](`_on_text` 의 "end")와 상한뿐이다.
 
 
 
@@ -509,9 +462,10 @@ async def _refresh_questions(client, session: InterviewSession) -> dict | None:
 
 
 async def _finish_answer(ws, client, session: InterviewSession) -> None:
-    """답변 하나를 끝낸다 — **한 번만.** 끝내는 길이 셋이라(버튼 · "이상입니다" ·
-    상한) 겹칠 수 있다. 끝내는 동안 온 두 번째는 버린다 — 그렇지 않으면 방금 비운
-    버퍼의 몇 조각이 같은 질문의 두 번째 답이 되어 "말이 들리지 않았어요" 가 뜬다.
+    """답변 하나를 끝낸다 — **한 번만.** 끝내는 길이 둘이라(버튼 · 상한) 겹칠 수
+    있고, 이제 끝내는 동안 전사를 기다리므로 그 몇 초 사이 버튼 연타도 여기로 온다.
+    두 번째는 버린다 — 그렇지 않으면 방금 비운 버퍼의 몇 조각이 같은 질문의 두 번째
+    답이 되어 "말이 들리지 않았어요" 가 뜬다.
     """
     if session.finishing:
         return
@@ -523,84 +477,107 @@ async def _finish_answer(ws, client, session: InterviewSession) -> None:
 
 
 async def _end_answer(ws, client, session: InterviewSession) -> None:
-    """말이 끝났다. **전사를 기다리지 않고 다음 질문을 보낸다.**
+    """말이 끝났다 — **받아쓴 뒤에** 넘긴다 (2026-09-15 개정).
 
-    침묵 감지(`feed` 의 `end`)와 지원자의 [답변 완료](`{"type":"end"}`, 2026-09-09)
-    가 같은 길을 탄다 — 끝을 누가 정했든 그 뒤는 같아야 한다.
+    09-11 판은 "답했다" 부터 찍고 다음 질문을 먼저 보낸 뒤 전사를 뒤에서 돌렸다.
+    CPU whisper 가 45~180초라 지원자를 못 기다리게 한 것인데, 그 순서에서는 전사가
+    비면 그 칸이 빈칸으로 남고 질문은 이미 소비돼 있어 앞에서 VAD 로 걸러야 했다 —
+    그 VAD 가 앱 소리를 자주 "목소리 0초" 로 봐서 실제 답변이 계속 튕겼다(09-15).
 
-    기다리게 하면 사람이 몰릴 때 지원자 화면이 "처리 중"에서 멈추고, 그러면 동시에
-    몇 명이 오는지를 미리 맞춰야 서비스가 산다. 그래서 `processing` 은 **마지막
-    답변에서만** 나간다 — 중간에는 보낼 이유가 없다.
+    전사가 API 로 옮겨(ADR-0038) 짧은 답은 1~3초, 3분 답도 ~20초라 기다릴 만하다.
+    그래서 **판단은 받아쓴 글 하나로** 한다: 글이 있으면 저장하고 넘기고, 없으면
+    같은 질문에 다시 답하게 한다. 소리를 재는 게이트는 두지 않는다.
     """
     pcm, rows = session.take_answer()
+    seq = session.current_seq()
+    seconds = len(pcm) / (iw.SAMPLE_RATE * iw.SAMPLE_WIDTH)
 
-    # **목소리가 없으면 답변이 아니다** (2026-09-11, `iw.voice_seconds` 주석). 넘기기
-    # 전에 거른다 — 넘긴 뒤에는 "답함" 이 찍혀 그 질문으로 돌아올 길이 없다.
-    # 세션 57 에서 폰 스피커 소리·잡음이 58초 만에 질문 10개를 전사 0자로 소진시켰다.
-    voiced = await asyncio.to_thread(voice_seconds, pcm)
-    if voiced is None:
-        iw.ANSWER_STATS["unmeasured"] += 1
-    elif voiced < iw.MIN_VOICE_SEC:
-        iw.ANSWER_STATS["rejected"] += 1
-        logger.info(
-            "목소리가 없어 답변으로 세지 않는다: token=%s 소리 %.1f초 · 목소리 %.2f초",
-            session.token[:8],
-            len(pcm) / (iw.SAMPLE_RATE * iw.SAMPLE_WIDTH),
-            voiced,
+    await ws.send_json({"type": "processing"})
+    # 전사가 도는 동안 판정을 쉰다 (`InterviewSession.transcribing` 주석)
+    session.transcribing = True
+    try:
+        pcm = await _drop_other_voice(session, pcm)
+        transcript = strip_end_phrase(
+            await transcribe_async(pcm, hint_of(session.questions))
         )
-        # **거른 소리를 버리지 않는다** (소연님 지적, 2026-09-11). 작게라도 말했는데
-        # 문턱을 못 넘었다면, 다시 말한 것과 합쳐 한 답이 되게 버퍼 앞에 되돌려 둔다.
-        # 확인하는 사이 새로 들어온 소리가 있으면 그 앞에 붙는다.
+    finally:
+        session.transcribing = False
+
+    if not transcript:
+        iw.ANSWER_STATS["empty"] += 1
+        logger.info(
+            "전사가 비어 답변으로 세지 않는다: token=%s seq=%s 소리 %.1f초",
+            session.token[:8], seq, seconds,
+        )
+        # **거른 소리를 버리지 않는다** (소연님 지적, 2026-09-11). 작게라도 말했다면
+        # 다시 말한 것과 합쳐 한 답이 되게 버퍼 앞에 되돌린다. 확인하는 사이 새로
+        # 들어온 소리가 있으면 그 앞에 붙는다.
         session.audio[:0] = [pcm]
         session.frames[:0] = rows
         await ws.send_json(
             {"type": "retry", "message": "말이 들리지 않았어요. 다시 답변해 주세요"}
         )
         return
-    else:
-        iw.ANSWER_STATS["voiced"] += 1
 
-    if not session.questions:
-        # 질문 목록을 못 받은 경우(서비스 토큰 없음·조회 실패)는 예전 방식으로 돈다
-        await ws.send_json({"type": "processing"})
-        await _answer_and_advance(ws, client, session, pcm, rows)
-        return
+    iw.ANSWER_STATS["saved"] += 1
+    logger.info(
+        "전사 끝: token=%s seq=%s 소리 %.1f초 · %d자",
+        session.token[:8], seq, seconds, len(transcript),
+    )
+    signal = session.signal(rows)
+    if signal:
+        logger.info("표정 신호: token=%s %s", session.token[:8], signal)
 
-    seq = session.current_seq()
-    # **답했다는 사실부터 남긴다** (2026-09-11). 전사는 뒤에서 몇 분씩 걸리는데,
-    # 그게 끝나야 "답했다" 가 되던 때는 그 사이 재접속·앱의 확인 요청이 지원자를
-    # 이미 답한 질문으로 되돌렸다(시연: Q9 → Q1, 다시 한 답은 409 로 버려짐).
+    # "답했다" 표시를 저장보다 먼저 남긴다 (2026-09-11 d960f9f) — 재접속이 그 사이
+    # 지원자를 이미 답한 질문으로 되돌리지 않게. 못 남겨도 저장되면 답한 것이 된다.
     if seq is not None:
-        logger.info(
-            "답함: token=%s seq=%s 소리 %.1f초",
-            session.token[:8], seq, len(pcm) / (iw.SAMPLE_RATE * iw.SAMPLE_WIDTH),
-        )
         try:
             await mark_answered(client, session.token, seq)
         except Exception:
-            # 못 남겨도 면접은 간다 — 전사가 저장되면 그때 답한 것이 된다(예전 동작)
             logger.exception("답함 표시 실패: token=%s seq=%s", session.token[:8], seq)
-    await session.pending.put((pcm, rows, seq))
+    try:
+        state = await submit_answer(client, session.token, transcript, seq)
+    except Exception:
+        # 저장이 안 됐으면 넘기지 않는다 — 소리를 되돌리고 다시 답하게 한다.
+        # 넘겨 버리면 그 답은 어디에도 없다.
+        logger.exception("답변 저장 실패: token=%s seq=%s", session.token[:8], seq)
+        session.audio[:0] = [pcm]
+        session.frames[:0] = rows
+        await ws.send_json(
+            {"type": "retry", "message": "답변을 저장하지 못했어요. 다시 답변해 주세요"}
+        )
+        return
+
+    if not session.questions:
+        # 질문 목록을 못 받은 경우(서비스 토큰 없음·조회 실패) — 백엔드가 준
+        # "지금 질문" 을 그대로 쓴다
+        if isinstance(state, dict) and state.get("current_question"):
+            await ws.send_json(
+                {
+                    "type": "question",
+                    "seq": state.get("question_seq"),
+                    "text": state.get("current_question"),
+                }
+            )
+            return
+        await _close(ws, client, session)
+        return
 
     nxt = session.advance()
+    if nxt is None:
+        # 꼬리질문은 전사가 저장된 뒤에야 백엔드가 만들어 붙이므로 시작 때 받아 둔
+        # 목록에는 없다 — 목록을 다시 본다
+        nxt = await _refresh_questions(client, session)
     if nxt:
         await ws.send_json(
             {"type": "question", "seq": nxt["seq"], "text": nxt["question"]}
         )
         return
+    await _close(ws, client, session)
 
-    # 준비된 질문이 떨어졌다. **남은 전사를 끝낸 뒤 목록을 다시 본다** — 꼬리질문은
-    # 전사가 저장된 뒤에야 백엔드가 만들어 붙이므로(`_generate_followup_bg`) 면접
-    # 시작 때 받아 둔 목록에는 없다. 남은 질문이 있으면 이어 가고, 없으면 닫는다.
-    # 먼저 닫으면 마지막 답변이 저장되기 전에 세션이 done 이 되어 담당자가 빈칸을 본다.
-    await ws.send_json({"type": "processing"})
-    await session.pending.join()
-    nxt = await _refresh_questions(client, session)
-    if nxt:
-        await ws.send_json(
-            {"type": "question", "seq": nxt["seq"], "text": nxt["question"]}
-        )
-        return
+
+async def _close(ws, client, session: InterviewSession) -> None:
+    """남은 질문이 없다 — 세션을 닫고 지원자에게 알린다."""
     try:
         await finish_interview(client, session.token)
     except Exception:
@@ -668,107 +645,6 @@ async def _drop_other_voice(session: InterviewSession, pcm: bytes) -> bytes:
     return kept
 
 
-async def _transcribe_pump(client, session: InterviewSession) -> None:
-    """세션의 전사 대기줄을 순서대로 비운다. 면접당 하나 돈다.
-
-    **한 사람의 답변은 낸 순서대로 저장된다.** 전사 자체는 워커 전체에서 한 번에
-    하나씩만 돌지만(2 vCPU 에서 겹쳐 돌리면 더 느리다), 그 줄서기는 사람 사이의
-    것이라 순서를 보장하지 않는다 — 사람 안의 순서는 이 대기줄이 맡는다.
-    """
-    while True:
-        pcm, rows, seq = await session.pending.get()
-        try:
-            # **전사가 도는 동안에는 판정을 쉰다** (2026-09-10 실측). 판정은 한 번에
-            # 185ms 를 쓰는데 초당 한 번 돌아, 8.9초 발화의 전사가 45초 제한
-            # (`STT_TIMEOUT_SEC`)을 넘겨 `[전사 지연]` 자리표시자가 저장됐다.
-            #
-            # 대기줄로 바뀐 뒤로는 이 전사가 **지원자가 다음 질문에 답하는 동안**
-            # 돌아서 겹치는 시간이 더 길다. 답변이 통째로 날아가는 것보다 그 몇 초
-            # 판정을 거르는 편이 낫다 — 판정은 곁들이고 답변은 면접 그 자체다.
-            session.transcribing = True
-            started = time.monotonic()
-            try:
-                pcm = await _drop_other_voice(session, pcm)
-                transcript = await transcribe_async(pcm, hint_of(session.questions))
-            finally:
-                session.transcribing = False
-            # "이상입니다" 는 답변 내용이 아니라 끝 신호다 — 저장 전에 뗀다 (2026-09-11)
-            transcript = strip_end_phrase(transcript)
-            # 칸별 결과를 남긴다 — 세션 59 에서 "첫 문장이 빠졌다" 를 로그로 가를 수
-            # 없었다(소리 길이와 글 길이가 같이 있으면 빠진 것인지 안 온 것인지 갈린다)
-            logger.info(
-                "전사 끝: token=%s seq=%s 소리 %.1f초 · %.1f초 걸림 · %d자",
-                session.token[:8], seq,
-                len(pcm) / (iw.SAMPLE_RATE * iw.SAMPLE_WIDTH),
-                time.monotonic() - started, len(transcript or ""),
-            )
-            if not transcript:
-                # **이 칸은 빈칸으로 남는다.** 전에는 "다시 답변해 주세요" 를 띄웠는데,
-                # 다음 질문이 이미 나간 뒤라 그럴 수 없다. 담당자가 빈칸을 보고
-                # 판단한다 — 지원자를 기다리게 하지 않는 대가다.
-                logger.info(
-                    "전사가 비어 %s번 답변을 저장하지 않는다: token=%s",
-                    seq, session.token[:8],
-                )
-                continue
-            signal = session.signal(rows)
-            if signal:
-                logger.info("표정 신호: token=%s %s", session.token[:8], signal)
-            await submit_answer(client, session.token, transcript, seq)
-        except Exception:
-            logger.exception(
-                "답변 저장 실패: token=%s seq=%s", session.token[:8], seq
-            )
-        finally:
-            session.pending.task_done()
-
-
-async def _answer_and_advance(ws, client, session, pcm, rows) -> None:
-    """예전 방식 — 전사를 기다렸다가 다음 질문을 받아 온다.
-
-    질문 목록을 못 받았을 때만 여기로 온다. 느리지만 **동작은 같다.**
-    """
-    # 대기줄 경로와 같은 이유로 여기서도 판정을 쉰다 (`_transcribe_pump` 주석)
-    session.transcribing = True
-    try:
-        transcript = await transcribe_async(pcm, hint_of(session.questions))
-    finally:
-        session.transcribing = False
-    transcript = strip_end_phrase(transcript)
-    if not transcript:
-        logger.info("전사 결과가 비어 답변으로 세지 않는다: token=%s", session.token[:8])
-        await ws.send_json(
-            {"type": "retry", "message": "말이 들리지 않았어요. 다시 답변해 주세요"}
-        )
-        return
-
-    signal = session.signal(rows)
-    if signal:
-        logger.info("표정 신호: token=%s %s", session.token[:8], signal)
-
-    try:
-        state = await submit_answer(client, session.token, transcript)
-    except Exception:
-        logger.exception("답변 저장 실패: token=%s", session.token[:8])
-        await ws.send_json({"type": "error", "message": "답변을 저장하지 못했습니다"})
-        return
-
-    if state.get("current_question"):
-        await ws.send_json(
-            {
-                "type": "question",
-                "seq": state.get("question_seq"),
-                "text": state.get("current_question"),
-            }
-        )
-        return
-    try:
-        await finish_interview(client, session.token)
-    except Exception:
-        logger.exception("면접 종료 처리 실패: token=%s", session.token[:8])
-    await ws.send_json({"type": "done"})
-
-
 async def _live_verdict(client, session: InterviewSession) -> None:
     """최근 4초를 판정해 백엔드로 민다. 실패해도 면접에는 영향이 없다."""
     try:
@@ -829,10 +705,10 @@ async def _on_text(ws, client, session: InterviewSession, text: str) -> None:
     if kind == "ping":
         await ws.send_json({"type": "pong"})
     elif kind == "end":
-        # 지원자가 [답변 완료] 를 눌렀다 (PROTOCOL.md). 2026-09-11 부터 침묵으로는
-        # 넘어가지 않으므로, 이것과 "이상입니다" 가 답변을 끝내는 두 길이다.
+        # 지원자가 [답변 완료] 를 눌렀다 (PROTOCOL.md). 2026-09-15 부터 답변을 끝내는
+        # 길은 이것(과 상한)뿐이다 — 침묵으로도 "이상입니다" 로도 넘어가지 않는다.
         if session.finishing:
-            return  # 이미 끝내는 중 — "이상입니다" 와 버튼이 겹쳤다
+            return  # 이미 끝내는 중(전사 대기 포함) — 버튼을 연타한 것
         if session.force_end():
             iw.ANSWER_STATS["by_button"] += 1
             await _finish_answer(ws, client, session)

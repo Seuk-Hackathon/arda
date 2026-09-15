@@ -40,6 +40,8 @@ export function useAiInterview(token: string | null) {
   const [question, setQuestion] = useState<string | null>(null)
   const [seq, setSeq] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
+  /* 서버가 같은 질문에 다시 답하라고 한 이유(`retry` 의 message). 질문이 바뀌면 지운다. */
+  const [note, setNote] = useState<string | null>(null)
 
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
@@ -129,6 +131,7 @@ export function useAiInterview(token: string | null) {
           case 'question':
             setQuestion(m.text)
             setSeq(m.seq)
+            setNote(null)
             setPhase('waiting')
             break
           case 'listening':
@@ -136,6 +139,11 @@ export function useAiInterview(token: string | null) {
             break
           case 'processing':
             setPhase('thinking')
+            break
+          case 'retry':
+            /* 받아쓴 글이 비었다 — 같은 질문을 그대로 두고 다시 답하게 한다 (PROTOCOL.md) */
+            setNote(m.message ?? '말이 들리지 않았어요. 다시 답변해 주세요')
+            setPhase('waiting')
             break
           case 'done':
             setPhase('done')
@@ -215,5 +223,18 @@ export function useAiInterview(token: string | null) {
     }
   }, [cleanup, token])
 
-  return { phase, question, seq, error, videoRef, leave }
+  /* [답변 완료] (2026-09-15). **답변은 이 버튼으로만 끝난다** — 침묵으로도,
+     "이상입니다" 로도 넘어가지 않는다(PROTOCOL.md). 서버는 여기까지의 소리를 받아써서
+     글이 있으면 저장하고 다음 `question` 을, 비었으면 `retry` 를 보낸다. 그 사이는
+     `processing` 이라 화면이 "정리하는 중" 을 보인다. 앱(interview_live_screen.dart)
+     의 `sendEnd` 와 같은 메시지다. */
+  const endAnswer = useCallback(() => {
+    const ws = socketsRef.current[0]
+    if (!ws || ws.readyState !== WebSocket.OPEN) return
+    setNote(null)
+    setPhase('thinking')
+    ws.send(JSON.stringify({ type: 'end' }))
+  }, [])
+
+  return { phase, question, seq, error, note, videoRef, leave, endAnswer }
 }

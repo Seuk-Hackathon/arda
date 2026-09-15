@@ -72,7 +72,7 @@ export default function InterviewAi({ token: given, nested = false }: Props = {}
   useEffect(() => { void load() }, [load])
 
   // 소켓은 started=true 로 바뀌었을 때만 열린다 (useAiInterview 는 token=null 이면 아무것도 안 함).
-  const { phase, question, seq, error, videoRef, leave } = useAiInterview(started ? token ?? null : null)
+  const { phase, question, seq, error, note, videoRef, leave, endAnswer } = useAiInterview(started ? token ?? null : null)
 
   async function handleConsent() {
     if (!token) return
@@ -114,10 +114,12 @@ export default function InterviewAi({ token: given, nested = false }: Props = {}
             phase={phase}
             question={question}
             seq={seq}
+            note={note}
             liveError={error}
             videoRef={videoRef}
             onConsent={handleConsent}
             onStart={handleStart}
+            onEndAnswer={endAnswer}
             onLeave={leave}
           />
         )}
@@ -161,13 +163,15 @@ function ReadyBody(props: {
   phase: ReturnType<typeof useAiInterview>['phase']
   question: string | null
   seq: number | null
+  note: string | null
   liveError: string | null
   videoRef: ReturnType<typeof useAiInterview>['videoRef']
   onConsent: () => void
   onStart: () => void
+  onEndAnswer: () => void
   onLeave: () => void
 }) {
-  const { data, started, pending, phase, question, seq, liveError, videoRef, onConsent, onStart, onLeave } = props
+  const { data, started, pending, phase, question, seq, note, liveError, videoRef, onConsent, onStart, onEndAnswer, onLeave } = props
 
   const posting = data.posting_title
   const name = data.applicant_name
@@ -199,8 +203,10 @@ function ReadyBody(props: {
           phase={phase}
           question={question}
           seq={seq}
+          note={note}
           liveError={liveError}
           videoRef={videoRef}
+          onEndAnswer={onEndAnswer}
           onLeave={onLeave}
         />
       )}
@@ -253,12 +259,17 @@ function LivePanel(props: {
   phase: ReturnType<typeof useAiInterview>['phase']
   question: string | null
   seq: number | null
+  note: string | null
   liveError: string | null
   videoRef: ReturnType<typeof useAiInterview>['videoRef']
+  onEndAnswer: () => void
   onLeave: () => void
 }) {
-  const { phase, question, seq, liveError, videoRef, onLeave } = props
+  const { phase, question, seq, note, liveError, videoRef, onEndAnswer, onLeave } = props
   const showLiveDot = phase === 'listening'
+  // 질문이 있고 서버가 전사 중이 아닐 때만 누를 수 있다 — 전사 중에 또 누르면 서버가 무시하지만
+  // 화면에서는 "정리하는 중" 을 지키는 편이 덜 헷갈린다
+  const canEnd = question !== null && (phase === 'waiting' || phase === 'listening')
 
   return (
     <>
@@ -289,9 +300,13 @@ function LivePanel(props: {
           <>
             {seq !== null && <p className={styles.seq}>질문 {seq}</p>}
             <h3 className={styles.ask}>{question}</h3>
-            <p className={styles.help}>
-              준비되시면 그냥 말씀하시면 됩니다. 버튼을 누르지 않으셔도 됩니다.
-            </p>
+            {note ? (
+              <p className={styles.error} role="alert">{note}</p>
+            ) : (
+              <p className={styles.help}>
+                답변을 마치면 아래 <strong>[답변 완료]</strong> 를 눌러 주세요. 그래야 다음 질문으로 넘어갑니다.
+              </p>
+            )}
           </>
         ) : (
           <p className={styles.help}>아르가 첫 질문을 준비하고 있습니다…</p>
@@ -299,6 +314,10 @@ function LivePanel(props: {
       </section>
 
       <footer className={styles.actions}>
+        {/* 주 동작 = 답변 완료 (2026-09-15 · 앱과 같은 버튼). 끝내기는 되돌릴 수 없는 쪽이라 2차 */}
+        <button type="button" className="btn btn-primary" disabled={!canEnd} onClick={onEndAnswer}>
+          {phase === 'thinking' ? '저장 중…' : '답변 완료'}
+        </button>
         <button type="button" className="btn btn-secondary" onClick={onLeave}>
           면접 끝내기
         </button>
