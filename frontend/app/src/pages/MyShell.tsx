@@ -177,23 +177,41 @@ export default function MyShell() {
   const [info, setInfo] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
 
+  /* 한 번이라도 받아 왔는가. **두 번째부터는 실패해도 보던 것을 뺏지 않는다** —
+     탭을 옮길 때마다 부르는데, 잠깐의 네트워크 끊김으로 로그인 화면에 튕기면
+     하던 일이 날아간다. 처음 받아 올 때만 로그인으로 되돌린다. */
+  const got = useRef(false)
+
   const load = useCallback(async (signal?: AbortSignal) => {
     try {
-      setView({ kind: 'ready', data: await applicantAuth.me(signal) })
+      const data = await applicantAuth.me(signal)
+      got.current = true
+      setView({ kind: 'ready', data })
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') return
+      if (got.current) return
       /* 토큰이 죽었으면 클라이언트가 이미 지웠다. 로그인 화면으로 되돌린다. */
       setView({ kind: 'login' })
     }
   }, [])
 
+  /* **탭을 옮길 때마다 다시 받는다** (2026-09-15).
+
+     셸이 한 번만 받으면, 인적성을 내고 현황으로 돌아온 지원자가 「아직 안
+     하셨습니다」와 사이드바 배지 ① 을 그대로 본다 — 방금 낸 것이 화면에
+     반영되지 않는다. 탭 자신은 자기 링크를 다시 부르므로 맞는 말을 하는데,
+     셸만 어제 것을 들고 있어 **한 화면이 두 말을 한다.** 앱에서 홈과 탭이
+     갈렸던 것과 같은 모양이다.
+
+     `/applicant/me` 는 작은 조회고 탭 전환은 하루에 몇 번이라, 매번 부르는
+     값이 낡은 화면보다 싸다. */
   useEffect(() => {
     if (preview) return
     if (!getApplicantToken()) return
     const ac = new AbortController()
     void load(ac.signal)
     return () => ac.abort()
-  }, [load, preview])
+  }, [load, preview, pathname])
 
   /* 내 정보 — Esc 로 닫는다. 바깥 클릭은 스크림이 받는다 */
   useEffect(() => {
