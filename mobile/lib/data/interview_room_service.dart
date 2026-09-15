@@ -107,6 +107,23 @@ class InterviewRoomService extends ChangeNotifier {
   Future<void> start() async {
     _alive = true;
 
+    // 0) **오디오 세션을 미디어 모드로 못 박는다** (2026-09-15 실기기 재현).
+    //    flutter_webrtc 는 오디오를 안 잡아도 초기화 과정에서 안드로이드
+    //    AudioManager 를 `MODE_IN_COMMUNICATION` 으로 바꾼다. 그 상태에서 record
+    //    가 새 AudioRecord 를 default 소스로 열면 삼성 QCOM HAL 이 시작 직후
+    //    두 번 close 시켜 조각이 하나도 안 도착한다 (logcat:
+    //    `PCM_RECORD IoHandle:3518 stream was closed`, `updateVoiceBoosterState
+    //    curDevice 2` = EARPIECE). `media` 로 명시하면 세션이 음악 재생 모드로
+    //    남아 record 가 정상적으로 열린다.
+    try {
+      await AndroidNativeAudioManagement.setAndroidAudioConfiguration(
+        AndroidAudioConfiguration.media,
+      );
+    } on Object catch (e) {
+      // iOS 나 데스크톱 시뮬레이터에서는 무시한다 — Android 에서만 유효한 값이다
+      if (kDebugMode) debugPrint('[rtc] 오디오 세션 설정 실패(무시): $e');
+    }
+
     // 1) **카메라만** 잡는다. 마이크는 STT 파이프(`MicService` · record)가 혼자 연다.
     //
     //    09-09 ~ 09-14 까지는 여기서 마이크도 같이 잡았다(담당자가 목소리를 WebRTC
