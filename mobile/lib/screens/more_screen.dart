@@ -1,7 +1,11 @@
 /// 더보기 (더보기 탭) — 앱 UI 초안(2026-09-01) 조각 11.
 ///
-/// 웹 사이드바 6개 중 탭 5칸에 못 들어간 **평가 현황 · 설정**이 여기로 모인다.
+/// 웹 사이드바 중 탭 5칸에 못 들어간 것이 여기로 모인다.
 /// 사이드바 하단의 프로필 자리도 이 화면이 받는다.
+///
+/// **'평가 현황' 은 뺐다 (2026-09-15).** 웹에서 같이 지웠다 — 평가는 지원자
+/// 상세에서 남기고, 같은 일을 하는 자리가 둘이면 어느 쪽이 진짜인지 갈린다.
+/// 그래서 지금 여기 남은 것은 설정 · 알림 · 로그아웃뿐이다.
 ///
 /// 05-design 설정 절: "**사이드바 하단 프로필은 표시 전용** — 로그인한 사용자의
 /// 이름·역할 라벨·이니셜 아바타를 실데이터로 그린다. **클릭 진입은 두지 않는다**:
@@ -10,10 +14,9 @@
 ///
 /// **'단계 이력' 은 뺐다 (2026-09-03).** 누를 곳이 없는 죽은 줄이었다 — 단계
 /// 이력은 지원자 상세에서 *그 사람 것*으로 들어가고, 전체를 모아 보는 화면은
-/// 웹에도 없다(`More.tsx` 는 평가 현황·설정·알림 셋뿐).
+/// 웹에도 없다.
 library;
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../data/mock_data.dart';
@@ -24,19 +27,9 @@ import '../routes.dart';
 import '../theme/tokens.dart';
 
 class MoreScreen extends StatelessWidget {
-  const MoreScreen({super.key, this.user, this.reviewCount});
+  const MoreScreen({super.key, this.user});
 
   final AppUser? user;
-
-  /// 평가 현황 배지에 붙는 수 — **셸이 대시보드에서 받은 것을 흘려 준다.**
-  ///
-  /// 값이 늦게 오므로(대시보드가 서버를 기다린다) 그냥 `int?` 가 아니라
-  /// 들을 수 있는 것으로 받는다. 못 받으면 배지를 안 그린다.
-  final ValueListenable<int?>? reviewCount;
-
-  /// 셸이 숫자를 안 넘겼을 때(테스트·화면 하나만 띄운 개발 중) 쓰는 빈 자리.
-  /// 늘 null 이라 배지가 그려지지 않는다
-  static final ValueNotifier<int?> _noBadge = ValueNotifier<int?>(null);
 
   @override
   Widget build(BuildContext context) {
@@ -49,26 +42,8 @@ class MoreScreen extends StatelessWidget {
       children: [
         _Profile(user: me),
         const SizedBox(height: AppSpace.s4),
-        // 배지는 **서버가 준 수**만 쓴다. 2026-09-08 까지 여기가 목데이터를
-        // 그렸다: 셸이 `const MoreScreen()` 으로 만들어 값이 늘 null 이었고
-        // `?? mockReviewQueueCount` 로 떨어져, 배정이 0건이든 7건이든 화면에는
-        // 영원히 '2' 가 떴다(목 지원자 중 서류·면접 단계이면서 평가 기록이
-        // 없는 사람이 둘이다). 없는 숫자를 지어내느니 안 그리는 게 낫다.
-        ValueListenableBuilder<int?>(
-          valueListenable: reviewCount ?? _noBadge,
-          builder: (context, count, _) => _Group(
-            items: [
-              _Item(
-                icon: Icons.star_outline,
-                label: '평가 현황',
-                badge: count,
-                onTap: () =>
-                    Navigator.pushNamed(context, Routes.evaluationQueue),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: AppSpace.s4),
+        // 「평가 현황」이 여기 있었다 (배지 딸린 첫 묶음). 2026-09-15 에
+        // 웹과 함께 지웠다 — 평가는 지원자 상세에서 남긴다.
         _Group(
           items: [
             _Item(
@@ -216,12 +191,11 @@ class _Group extends StatelessWidget {
   }
 }
 
-/// 목록 한 줄 — 아이콘 · 라벨 · (배지 | 값) · 화살표.
+/// 목록 한 줄 — 아이콘 · 라벨 · 값 · 화살표.
 class _Item extends StatelessWidget {
   const _Item({
     required this.icon,
     required this.label,
-    this.badge,
     this.trailing,
     this.exits = false,
     this.onTap,
@@ -229,9 +203,6 @@ class _Item extends StatelessWidget {
 
   final IconData icon;
   final String label;
-
-  /// 숫자 배지 — 0 이면 그리지 않는다
-  final int? badge;
 
   /// 오른쪽에 붙는 현재 값 (예: 알림 "켬")
   final String? trailing;
@@ -275,7 +246,6 @@ class _Item extends StatelessWidget {
                   ),
                 ),
               ),
-              if (badge != null && badge! > 0) _Badge(count: badge!),
               if (trailing != null)
                 Text(
                   trailing!,
@@ -295,38 +265,6 @@ class _Item extends StatelessWidget {
               ],
             ],
           ),
-        ),
-      ),
-    );
-  }
-}
-
-/// 대기 건수 배지 — 05-design §1 합격 연두 워시를 쓴다(할 일이 남았다는 표시).
-class _Badge extends StatelessWidget {
-  const _Badge({required this.count});
-
-  final int count;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      constraints: const BoxConstraints(minWidth: 22),
-      height: 22,
-      padding: const EdgeInsets.symmetric(horizontal: AppSpace.s2),
-      alignment: Alignment.center,
-      decoration: BoxDecoration(
-        color: AppColors.sproutSoft,
-        borderRadius: AppShape.pill,
-        border: Border.all(color: AppColors.sprout, width: AppShape.borderW),
-      ),
-      child: Text(
-        '$count',
-        style: const TextStyle(
-          fontFamily: AppType.fontFamily,
-          fontSize: AppType.caption,
-          fontWeight: FontWeight.w700,
-          fontFeatures: AppType.tabularNums,
-          color: AppColors.leaf,
         ),
       ),
     );

@@ -8,14 +8,8 @@ import 'package:arda/theme/tokens.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-Widget host({AppUser? user, int? reviewCount}) => MaterialApp(
-  home: Scaffold(
-    body: MoreScreen(
-      user: user,
-      // 셸은 대시보드가 받아 온 뒤에 값을 채운다 — 화면은 들을 수 있는 것을 받는다
-      reviewCount: reviewCount == null ? null : ValueNotifier(reviewCount),
-    ),
-  ),
+Widget host({AppUser? user}) => MaterialApp(
+  home: Scaffold(body: MoreScreen(user: user)),
 );
 
 void main() {
@@ -56,47 +50,21 @@ void main() {
     expect(find.textContaining('관리자'), findsOneWidget);
   });
 
-  testWidgets('탭에 못 들어간 메뉴가 여기 있다 — 평가 현황 · 설정', (tester) async {
+  testWidgets('탭에 못 들어간 메뉴가 여기 있다 — 설정 · 알림', (tester) async {
     await tester.pumpWidget(host());
 
-    expect(find.text('평가 현황'), findsOneWidget);
     expect(find.text('설정'), findsOneWidget);
+    expect(find.text('알림'), findsOneWidget);
   });
 
-  testWidgets('평가 대기 건수가 배지로 붙는다', (tester) async {
-    await tester.pumpWidget(host(reviewCount: 7));
-    expect(find.text('7'), findsOneWidget);
-  });
-
-  testWidgets('대기 0건이면 배지를 그리지 않는다', (tester) async {
-    await tester.pumpWidget(host(reviewCount: 0));
-    expect(find.text('0'), findsNothing);
-  });
-
-  // 2026-09-08: 여기가 목데이터를 그려 배정이 몇 건이든 늘 '2' 가 떴다.
-  // 셸이 값을 안 넘기던 것이 원인이라, 안 넘어온 경우를 못 박는다
-  testWidgets('셸이 수를 안 넘기면 배지가 없다 — 목데이터로 지어내지 않는다', (tester) async {
+  // 「평가 현황」 항목과 그 배지(대기 건수·늦게 오는 값·0건)를 보던 테스트 넷이
+  // 여기 있었다. 2026-09-15 에 평가 현황을 지우면서 같이 뺐다.
+  testWidgets('평가 현황은 더 이상 없다 — 평가는 지원자 상세에서 남긴다', (tester) async {
     await tester.pumpWidget(host());
 
-    expect(find.text('평가 현황'), findsOneWidget);
-    expect(find.text('$mockReviewQueueCount'), findsNothing);
+    expect(find.text('평가 현황'), findsNothing);
   });
 
-  testWidgets('뒤늦게 온 수가 배지에 반영된다 — 대시보드가 서버를 기다린다', (tester) async {
-    final count = ValueNotifier<int?>(null);
-    addTearDown(count.dispose);
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(body: MoreScreen(reviewCount: count)),
-      ),
-    );
-    expect(find.text('5'), findsNothing);
-
-    count.value = 5;
-    await tester.pump();
-
-    expect(find.text('5'), findsOneWidget);
-  });
 
   testWidgets('로그아웃도 무채다 — 나가는 것은 판단이 아니다 (§1)', (tester) async {
     await tester.pumpWidget(host());
@@ -114,8 +82,9 @@ void main() {
   testWidgets('로그아웃에는 화살표를 달지 않는다 — 이동이 아니라 실행이다', (tester) async {
     await tester.pumpWidget(host());
 
-    // 화살표는 화면을 여는 항목에만 (평가 현황·설정·알림 = 3개)
-    expect(find.byIcon(Icons.chevron_right), findsNWidgets(3));
+    // 화살표는 화면을 여는 항목에만 (설정·알림 = 2개).
+    // 2026-09-15 까지 셋이었다 — 평가 현황이 있었다
+    expect(find.byIcon(Icons.chevron_right), findsNWidgets(2));
   });
 
   testWidgets('단계 이력은 없다 — 죽은 줄이었고 웹에도 없다 (2026-09-03)', (tester) async {
@@ -129,7 +98,7 @@ void main() {
   testWidgets('목록 항목 높이가 터치 타깃 44 를 넘는다 (§9)', (tester) async {
     await tester.pumpWidget(host());
 
-    for (final label in ['평가 현황', '설정', '알림', '로그아웃']) {
+    for (final label in ['설정', '알림', '로그아웃']) {
       final row = tester.getSize(
         find
             .ancestor(of: find.text(label), matching: find.byType(InkWell))

@@ -31,9 +31,6 @@ abstract final class Routes {
   /// 평가 목록. 인자로 Applicant 를 받는다 (시안 3번)
   static const evaluations = '/applicants/evaluations';
 
-  /// 평가 대기 큐 — 더보기 → 평가 현황. 인자 없음
-  static const evaluationQueue = '/evaluations';
-
   /// 설정 — 더보기 → 설정. 인자 없음
   static const settings = '/settings';
 

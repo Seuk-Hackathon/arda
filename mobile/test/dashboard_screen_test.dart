@@ -285,63 +285,8 @@ void main() {
     });
   });
 
-  group('조각 7 — 내 리뷰 대기', () {
-    testWidgets('라벨 · 큰 숫자 · 채운 버튼', (tester) async {
-      await tester.pumpWidget(host());
-      await tester.pumpAndSettle();
-
-      expect(find.text('내 리뷰 대기'), findsOneWidget);
-      // 범례에도 같은 숫자가 있어 글자로는 특정할 수 없다 — 키로 집는다
-      expect(
-        tester.widget<Text>(find.byKey(reviewCountKey)).data,
-        '$mockReviewQueueCount',
-      );
-      expect(find.text('평가하러 가기'), findsOneWidget);
-    });
-
-    testWidgets('숫자는 display + 제목 그림자, 단위는 보조색 (§2)', (tester) async {
-      await tester.pumpWidget(host());
-      await tester.pumpAndSettle();
-
-      final number = tester.widget<Text>(find.byKey(reviewCountKey));
-      expect(number.style!.fontSize, AppType.display);
-      expect(number.style!.fontWeight, FontWeight.w700);
-      expect(number.style!.shadows, AppTextShadow.heading);
-      expect(number.style!.fontFeatures, AppType.tabularNums);
-
-      final unit = tester.widget<Text>(find.byKey(reviewUnitKey));
-      expect(unit.data, '명');
-      expect(unit.style!.fontSize, AppType.num);
-      expect(unit.style!.color, AppColors.textSub);
-      // §2: 작은 글씨엔 그림자 금지
-      expect(unit.style!.shadows, isNull);
-    });
-
-    testWidgets('버튼은 잎초록 · 흰 글자 · onFill 그림자 · 높이 44 (§1 · §2 · §9)', (
-      tester,
-    ) async {
-      await tester.pumpWidget(host());
-      await tester.pumpAndSettle();
-
-      final material = tester.widget<Material>(
-        find
-            .ancestor(of: find.text('평가하러 가기'), matching: find.byType(Material))
-            .first,
-      );
-      expect(material.color, AppColors.leaf);
-
-      final label = tester.widget<Text>(find.text('평가하러 가기'));
-      expect(label.style!.color, AppColors.bgElev);
-      expect(label.style!.shadows, AppTextShadow.onFill);
-
-      final box = tester.getSize(
-        find
-            .ancestor(of: find.text('평가하러 가기'), matching: find.byType(InkWell))
-            .first,
-      );
-      expect(box.height, AppLayout.minTouchTarget);
-    });
-  });
+  // 「조각 7 — 내 리뷰 대기」 묶음이 여기 있었다. 2026-09-15 에 평가 현황을
+  // 지우면서 그 카드가 화면에서 사라져 같이 뺐다.
 
   // 2026-09-07 — 지원자 이름 목록(옛 조각 8)과 면접 행 일정 칩 검사를 걷었다.
   // 웹 대시보드 개편을 따라 그 블록이 화면에서 사라졌다. 사람을 훑는 일은
