@@ -255,6 +255,89 @@
   padding-top: 2px;
 }
 
+/* 종합평가에서 바로 최종 판정 (2026-09-15). 셀 하나에 상황별 위젯이 다 들어간다:
+   accepted/rejected 는 결과 뱃지, interview 는 [합격][불합격] 두 버튼, 불합격 누르면
+   같은 자리에 사유 입력 줄. 자리가 안 밀리도록 셀은 `white-space: nowrap` 고정. */
+.decideCell {
+  white-space: nowrap;
+  min-width: 190px;
+}
+
+.decideBtns {
+  display: inline-flex;
+  gap: var(--sp-1);
+}
+
+.decideBtn {
+  height: 26px;
+  padding: 0 var(--sp-3);
+  border-radius: var(--r-pill);
+  border: var(--border-w) solid var(--border);
+  background: var(--bg-elev);
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--font-caption);
+  font-weight: 700;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease);
+}
+.decideBtn:hover:not(:disabled) { background: var(--bg-sunken); }
+.decideBtn:disabled { opacity: .55; cursor: default; }
+.decideBtn:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
+
+.decideBtnOk {
+  background: var(--ok-soft);
+  color: var(--ok-text);
+  border-color: transparent;
+}
+.decideBtnOk:hover:not(:disabled) { background: var(--ok-soft); filter: brightness(1.1); }
+
+.decideBtnBad {
+  background: var(--danger-soft);
+  color: var(--danger);
+  border-color: transparent;
+}
+.decideBtnBad:hover:not(:disabled) { background: var(--danger-soft); filter: brightness(1.1); }
+
+.decideReasonRow {
+  display: inline-flex;
+  gap: var(--sp-1);
+  align-items: center;
+}
+
+.decideReason {
+  height: 26px;
+  min-width: 200px;
+  padding: 0 var(--sp-2);
+  border-radius: var(--r-ctl);
+  border: var(--border-w) solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--font-caption);
+}
+.decideReason:focus { outline: 2px solid var(--accent-text); outline-offset: 1px; }
+
+.decideBadge {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 var(--sp-3);
+  border-radius: var(--r-pill);
+  font-weight: 700;
+  font-size: var(--font-caption);
+}
+.decideOk { background: var(--ok-soft); color: var(--ok-text); }
+.decideBad { background: var(--danger-soft); color: var(--danger); }
+
+.decideErr {
+  display: block;
+  margin: var(--sp-1) 0 0;
+  font-size: var(--font-caption);
+  color: var(--danger);
+  white-space: normal;
+}
+
 .concernLabel {
   color: var(--danger);
 }
