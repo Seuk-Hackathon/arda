@@ -612,6 +612,9 @@
 .ivStatusDone { color: var(--accent-text); }
 
 .ivCopy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   height: 36px;
   padding: 0 var(--sp-2);
   border-radius: var(--r-ctl);
