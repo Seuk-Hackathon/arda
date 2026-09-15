@@ -106,7 +106,9 @@ MIN_SPEECH_SEC = 0.7
 MAX_SPEECH_SEC = 180
 
 # 표정은 매 프레임 보지 않는다. 초당 몇 장이면 신호가 충분하고, 그 이상은 CPU 만 쓴다.
-FRAME_STRIDE = 3
+# 2026-09-15: STT 가 OpenAI API 로 이전(ADR-0038)돼 CPU 여유가 생겼다. 3→1 로 낮춰
+# 창당 얼굴 공급을 늘린다 — 35% 검출률 × stride 3 = 창당 4장으로 문턱(5장)에 못 미쳤다.
+FRAME_STRIDE = 1
 
 # 이력서 사진과 대조할 때 볼 장 수. 한 장으로 정하지 않는다 — 눈 감은 장·흔들린 장이
 # 걸리면 멀쩡한 지원자가 낮게 나온다. 다 보고 **가장 잘 맞은 값**으로 한 번만 정한다.
@@ -450,8 +452,10 @@ class InterviewSession:
         self.face_busy = False
         # 이 면접의 프레임이 몇 도 누워 있는가. **처음 얼굴을 찾을 때 정해진다**
         # (`face_row_search`). None 이면 아직 안 정해진 것이고, 그동안만 네 방향을
-        # 뒤진다.
+        # 뒤진다. 각도가 굳혀진 뒤 5초 이상 얼굴을 못 찾으면 None 으로 되돌려
+        # 재탐색한다 — 폰을 돌리거나 눕히면 그 각도로는 영원히 실패하는 것을 막는다.
         self.frame_rotation: int | None = None
+        self._last_face_time: float = 0.0
         # 전사가 도는 동안 판정을 쉬게 하는 표시 (app.py `_transcribe_pump`).
         # 둘이 같은 CPU 를 다투면 전사가 45초 제한을 넘긴다 — 2026-09-10 실측.
         #
@@ -514,11 +518,16 @@ class InterviewSession:
         self._frame_count += 1
         if self._frame_count % FRAME_STRIDE:
             return None
+        now = time.monotonic()
+        # 각도가 굳혀진 뒤 5초 이상 얼굴을 못 찾으면 재탐색한다.
+        if self.frame_rotation is not None and self._last_face_time > 0 and now - self._last_face_time > 5.0:
+            logger.info("얼굴 5초 미검출 — 각도 재탐색: token=%s", self.token[:8])
+            self.frame_rotation = None
         row, rot, rotated_bgr = face_row_search_full(jpeg, self.frame_rotation)
         if row is not None:
+            self._last_face_time = now
             if self.frame_rotation is None:
-                # 이 면접에서 처음 얼굴을 찾았다. 각도를 굳히고 밖에도 남긴다 —
-                # 담당자 화면이 비어 있을 때 방향 탓인지 알 수 있어야 한다.
+                # 이 면접에서 처음 얼굴을 찾았다(또는 재탐색 후). 각도를 굳히고 밖에도 남긴다.
                 self.frame_rotation = rot
                 LAST_ROTATION = rot
                 logger.info("프레임 방향 %s° 로 확정: token=%s", rot, self.token[:8])
@@ -608,7 +617,7 @@ class InterviewSession:
 
     def signal(self, rows: list) -> dict | None:
         """표정 신호. 프레임이 너무 적으면 내지 않는다 — 없는 것이 틀린 것보다 낫다."""
-        if len(rows) < 5:
+        if len(rows) < 3:
             return None
         arr = np.array(rows)
         return {
@@ -659,7 +668,7 @@ def score(pcm: bytes, rows: list, seconds: float, latest_frame=None) -> dict:
         face_signals,
     )
 
-    if len(rows) < 5:
+    if len(rows) < 3:
         return {"ok": False, "reason": "얼굴이 잘 안 보여요"}
 
     usable = len(pcm) - (len(pcm) % SAMPLE_WIDTH)
