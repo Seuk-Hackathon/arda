@@ -19,6 +19,7 @@ import 'package:arda/screens/applicant_shell.dart';
 import 'package:arda/screens/applicant_summary_screen.dart';
 import 'package:arda/screens/aptitude_screen.dart';
 import 'package:arda/screens/schedule_screen.dart';
+import 'package:arda/widgets/app_bottom_nav.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -127,10 +128,20 @@ void main() {
         '일정',
         '홈',
         '면접',
-        '더보기',
+        // 2026-09-15: '더보기' 에서 바꿨다. '더보기' 와 햄버거는 '여기 말고 더
+        // 있다' 는 뜻이라 무엇이 있는지 안 알려 준다
+        '내 정보',
       ]);
-      for (final label in ['인적성', '일정', '홈', '면접', '더보기']) {
-        expect(find.text(label), findsOneWidget);
+      // **탭바 안에서만 센다.** '면접' 은 홈의 여정 칸 이름(접수·서류·면접·결과)
+      // 과 겹쳐서, 화면 전체에서 세면 둘이 잡힌다
+      // `AppBottomNav<T>` 는 제네릭이라 byType 이 안 잡는다
+      final nav = find.byWidgetPredicate((w) => w is AppBottomNav);
+      for (final label in ['인적성', '일정', '홈', '면접', '내 정보']) {
+        expect(
+          find.descendant(of: nav, matching: find.text(label)),
+          findsOneWidget,
+          reason: label,
+        );
       }
     });
 
@@ -218,7 +229,7 @@ void main() {
       await tester.pumpWidget(shell(portal));
       await tester.pumpAndSettle();
 
-      await tester.tap(find.text('더보기'));
+      await tester.tap(find.text('내 정보'));
       await tester.pumpAndSettle();
       await tester.ensureVisible(find.text('로그아웃'));
       await tester.pumpAndSettle();
@@ -249,15 +260,20 @@ void main() {
   });
 
   group('홈 요약', () {
+    // 2026-09-15 개편: 이름이 목록의 한 줄이 아니라 화면의 머리가 됐고
+    // (인사말 + '곽민재 님'), 이메일은 내 정보 탭으로 갔다. 공고 이름은
+    // **두 군데** 나온다 — 급한 일 카드와 그 지원의 여정 카드.
     testWidgets('이름·공고·단계와 할 일 줄 셋', (tester) async {
       await tester.pumpWidget(shell(portalWith()));
       await tester.pumpAndSettle();
 
-      expect(find.text('곽민재님'), findsOneWidget);
-      expect(find.text('dnwjdwkd145@naver.com'), findsOneWidget);
-      expect(find.text('백엔드 — 시연'), findsOneWidget);
+      expect(find.text('안녕하세요'), findsOneWidget);
+      expect(find.text('곽민재 님'), findsOneWidget);
+      expect(find.text('백엔드 — 시연'), findsNWidgets(2));
       expect(find.text('서류 검토 중'), findsOneWidget);
-      for (final label in ['인적성 검사', '면접 시간', 'AI 면접']) {
+      // 급한 일 카드가 가리키는 것(인적성)은 제목과 줄 둘 다에 나온다
+      expect(find.text('인적성 검사'), findsNWidgets(2));
+      for (final label in ['면접 시간', 'AI 면접']) {
         expect(find.text(label), findsOneWidget);
       }
     });
@@ -266,9 +282,12 @@ void main() {
       await tester.pumpWidget(shell(portalWith()));
       await tester.pumpAndSettle();
 
-      expect(find.text('검사하기'), findsOneWidget);
-      expect(find.text('시간 고르기'), findsOneWidget);
-      expect(find.text('면접 보기'), findsOneWidget);
+      // 줄에 이름이 이미 붙어 있어 버튼은 짧은 동사만 남겼다 (2026-09-15).
+      // '하기' 는 급한 일 카드와 인적성 줄 둘 다에 나온다
+      expect(find.text('아직 안 하셨어요'), findsOneWidget);
+      expect(find.text('하기'), findsNWidgets(2));
+      expect(find.text('고르기'), findsOneWidget);
+      expect(find.text('보기'), findsOneWidget);
     });
 
     testWidgets('일정이 확정되면 그 줄만 조용해진다', (tester) async {
@@ -276,8 +295,8 @@ void main() {
       await tester.pumpWidget(shell(portal));
       await tester.pumpAndSettle();
 
-      expect(find.text('확정됐습니다'), findsOneWidget);
-      expect(find.text('시간 고르기'), findsNothing);
+      expect(find.text('확정됐어요'), findsOneWidget);
+      expect(find.text('고르기'), findsNothing);
     });
 
     // 2026-09-09. 서버가 끝난 것도 내려주게 바뀌었다(02-api.md). 그 전에는
@@ -287,13 +306,13 @@ void main() {
       await tester.pumpWidget(shell(portal));
       await tester.pumpAndSettle();
 
-      expect(find.text('완료했습니다'), findsOneWidget);
-      // 끝난 면접은 다시 들어갈 수 없다 — 문을 그리지 않는다
-      expect(find.text('면접 보기'), findsNothing);
-      expect(find.text('이어서 보기'), findsNothing);
+      expect(find.text('완료했어요'), findsOneWidget);
+      // 끝난 면접은 다시 들어갈 수 없다 — 문을 그리지 않는다.
+      // '보기' 는 이 화면에서 면접 줄에만 쓰므로 하나도 없어야 한다
+      expect(find.text('보기'), findsNothing);
       // **사라지지 않는다** — 줄은 그대로 있어야 마쳤다는 것을 알 수 있다
       expect(find.text('AI 면접'), findsOneWidget);
-      expect(find.text('아직 없습니다'), findsNothing);
+      expect(find.text('아직 없어요'), findsNothing);
     });
 
     testWidgets('인적성을 냈으면 제출했다고 말한다', (tester) async {
@@ -301,8 +320,8 @@ void main() {
       await tester.pumpWidget(shell(portal));
       await tester.pumpAndSettle();
 
-      expect(find.text('제출했습니다'), findsOneWidget);
-      expect(find.text('검사하기'), findsNothing);
+      expect(find.text('제출했어요'), findsOneWidget);
+      expect(find.text('하기'), findsNothing);
     });
 
     testWidgets('없는 것은 눌리지 않는다 — 눌러도 아무 일 없는 카드는 고장 같다', (tester) async {
@@ -310,8 +329,8 @@ void main() {
       await tester.pumpWidget(shell(portal));
       await tester.pumpAndSettle();
 
-      expect(find.text('아직 없습니다'), findsOneWidget);
-      expect(find.text('검사하기'), findsNothing);
+      expect(find.text('아직 없어요'), findsOneWidget);
+      expect(find.text('하기'), findsNothing);
     });
 
     testWidgets('지원이 여럿이면 전부 보여 준다 — 한 사람이 여러 공고에 낸다', (tester) async {
@@ -320,7 +339,13 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byType(ApplicantSummaryScreen), findsOneWidget);
-      expect(find.text('백엔드 — 시연'), findsOneWidget);
+      // 첫 지원은 급한 일 카드와 여정 카드 둘 다에 나온다
+      expect(find.text('백엔드 — 시연'), findsNWidgets(2));
+      // **둘째 지원은 화면 밖이다.** 지원마다 여정 카드가 한 장이라 한 화면에
+      // 다 안 들어간다 — 안 그리는 것이 아니라 내려야 보인다
+      expect(find.text('프론트엔드 — 시연'), findsNothing);
+      await tester.drag(find.byType(ListView).first, const Offset(0, -900));
+      await tester.pumpAndSettle();
       expect(find.text('프론트엔드 — 시연'), findsOneWidget);
     });
 
@@ -336,20 +361,67 @@ void main() {
   });
 
   group('인적성', () {
-    testWidgets('다 안 고르면 제출이 잠기고 몇 개 남았는지 적는다', (tester) async {
+    // 2026-09-15 개편: 안내 화면(문항 수·예상 시간·규칙 셋)을 거쳐 **한 문항씩**
+    // 묻는다. 전에는 열 문항을 한 화면에 늘어놓았다.
+    testWidgets('안내부터 보여 주고 시작을 눌러야 묻는다', (tester) async {
       await tester.pumpWidget(
         only(AptitudeScreen(token: _aptitudeToken, portal: portalWith())),
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('2문항 남았습니다'), findsOneWidget);
-      final button = tester.widget<FilledButton>(
-        find.ancestor(
-          of: find.text('2문항 남았습니다'),
-          matching: find.byType(FilledButton),
-        ),
+      expect(find.textContaining('2문항'), findsOneWidget);
+      // 규칙 줄은 굵은 앞부분 + 보통 뒷부분이 한 문단이라 RichText 다
+      expect(
+        find.textContaining('한 번만 낼 수 있어요.', findRichText: true),
+        findsOneWidget,
       );
-      expect(button.onPressed, isNull);
+      // 아직 문항은 안 보인다
+      expect(find.text('새로운 방식을 시도하는 것을 즐긴다.'), findsNothing);
+
+      await tester.tap(find.text('시작하기'));
+      await tester.pumpAndSettle();
+      expect(find.text('1 / 2'), findsOneWidget);
+    });
+
+    testWidgets('안 고른 문항은 건너뛸 수 없다', (tester) async {
+      await tester.pumpWidget(
+        only(AptitudeScreen(token: _aptitudeToken, portal: portalWith())),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('시작하기'));
+      await tester.pumpAndSettle();
+
+      // 고르기 전에는 '다음' 이 죽어 있다
+      // 버튼은 Material + InkWell 이다 — 잠기면 onTap 이 null 이다
+      final next = tester.widget<InkWell>(
+        find.ancestor(of: find.text('다음'), matching: find.byType(InkWell)).first,
+      );
+      expect(next.onTap, isNull);
+      expect(find.text('1 / 2'), findsOneWidget);
+    });
+
+    testWidgets('마지막 문항을 안 고르면 제출이 잠기고 몇 개 남았는지 적는다', (tester) async {
+      await tester.pumpWidget(
+        only(AptitudeScreen(token: _aptitudeToken, portal: portalWith())),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('시작하기'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('3'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('다음'));
+      await tester.pumpAndSettle();
+
+      // 마지막 문항. 서버가 422 를 주기 전에 화면이 먼저 막는다
+      expect(find.text('2 / 2'), findsOneWidget);
+      expect(find.text('1문항 남았어요'), findsOneWidget);
+      final button = tester.widget<InkWell>(
+        find
+            .ancestor(of: find.text('1문항 남았어요'), matching: find.byType(InkWell))
+            .first,
+      );
+      expect(button.onTap, isNull);
     });
 
     testWidgets('서버가 준 문항·척도를 그대로 쓴다', (tester) async {
@@ -358,8 +430,14 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('1. 새로운 방식을 시도하는 것을 즐긴다.'), findsOneWidget);
-      expect(find.text('전혀 아니다'), findsNWidgets(2)); // 문항마다 한 줄씩
+      await tester.tap(find.text('시작하기'));
+      await tester.pumpAndSettle();
+
+      // 번호는 진행 표시(1 / 2)가 맡는다 — 문장 앞에 붙이지 않는다
+      expect(find.text('새로운 방식을 시도하는 것을 즐긴다.'), findsOneWidget);
+      // 척도 이름은 한 문항씩 묻으므로 한 번씩만 나온다
+      expect(find.text('전혀 아니다'), findsOneWidget);
+      expect(find.text('매우 그렇다'), findsOneWidget);
     });
 
     testWidgets('다 고르면 제출되고 다시 못 고친다', (tester) async {
@@ -369,15 +447,21 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      await tester.tap(find.text('3').first);
+      await tester.tap(find.text('시작하기'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('3').last);
+
+      // 한 문항씩이다 — 고르고 '다음', 마지막에 '제출하기'
+      await tester.tap(find.text('3'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('다음'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('3'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('제출하기'));
       await tester.pumpAndSettle();
 
       expect(portal.calls, contains('submitAptitude:$_aptitudeToken:2'));
-      expect(find.textContaining('제출했습니다'), findsOneWidget);
+      expect(find.textContaining('제출했어요'), findsOneWidget);
     });
   });
 
@@ -421,7 +505,9 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(portal.calls, contains('confirmSlot:$_scheduleToken:100'));
-      expect(find.text('면접 시간이 확정됐습니다'), findsOneWidget);
+      // 2026-09-15 개편: 확정 뒤에는 날짜를 크게 적는다
+      expect(find.text('확정됐어요'), findsOneWidget);
+      expect(find.text('9월 10일 (목)'), findsOneWidget);
     });
 
     testWidgets('아르에게 물으면 질문과 답이 남는다', (tester) async {
@@ -436,9 +522,8 @@ void main() {
 
       await tester.enterText(find.byType(TextField), '면접은 얼마나 걸리나요?');
       await tester.pumpAndSettle();
-      await tester.ensureVisible(find.text('물어보기'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('물어보기'));
+      // 2026-09-15 개편: 보내기가 글자 버튼에서 화살표 아이콘이 됐다
+      await tester.tap(find.byIcon(Icons.arrow_upward));
       await tester.pumpAndSettle();
 
       expect(portal.calls, contains('askAr:$_scheduleToken:면접은 얼마나 걸리나요?'));
@@ -446,16 +531,22 @@ void main() {
     });
   });
 
-  group('더보기', () {
-    testWidgets('이름·이메일·단계와 로그아웃', (tester) async {
+  group('내 정보', () {
+    testWidgets('이름·이메일·숫자 셋과 로그아웃', (tester) async {
       await tester.pumpWidget(shell(portalWith()));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('더보기'));
+      await tester.tap(find.text('내 정보'));
       await tester.pumpAndSettle();
 
+      // 2026-09-15 개편: 지원 목록을 통째로 싣던 것을 **숫자 셋**으로 줄였다.
+      // 자세한 것은 홈이 그린다
       expect(find.text('곽민재'), findsOneWidget);
-      expect(find.text('서류 검토 중'), findsOneWidget);
-      expect(find.text('2026.09.02 접수'), findsOneWidget);
+      expect(find.text('dnwjdwkd145@naver.com'), findsOneWidget);
+      for (final label in ['낸 지원', '할 일', '합격']) {
+        expect(find.text(label), findsOneWidget);
+      }
+      // 지원자에게는 비밀번호가 없다 — 자리만 두고 이유를 적는다
+      expect(find.text('지금은 생년월일로 로그인해요'), findsOneWidget);
       expect(find.text('로그아웃'), findsOneWidget);
     });
   });
