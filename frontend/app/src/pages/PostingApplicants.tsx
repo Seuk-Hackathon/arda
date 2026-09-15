@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { ApiError } from '../api/client'
 import { applications, postings as postingsApi } from '../api/endpoints'
-import type { ApplicationListItem, Posting, Stage } from '../api/types'
+import type { ApplicationListItem, Posting, PostingStatus, Stage } from '../api/types'
 import { STAGE_LABEL, careerText, fmtDate, stageTone } from '../lib/stage'
 import ApplicantPanel from './ApplicantPanel'
 import { useRightPanel } from '../components/RightPanel'
@@ -121,6 +121,30 @@ export default function PostingApplicants() {
   /* 목록·퍼널을 다시 세게 하는 방아쇠 */
   const [tick, setTick] = useState(0)
 
+  /* 공고 마감·다시 열기 (2026-09-15). 마감일이 없는 공고는 저절로 닫히지 않는다 —
+     최종 결과를 낸 뒤 담당자가 여기서 직접 닫는다. 서버는 PATCH 한 번이고(02-api.md),
+     닫히면 공개 지원 링크가 410 을 준다(B4). 지원자·결과는 그대로 남고, 되돌릴 수 있다. */
+  const [statusBusy, setStatusBusy] = useState(false)
+  async function changeStatus(next: PostingStatus) {
+    if (!posting || statusBusy) return
+    const ask =
+      next === 'closed'
+        ? `"${posting.title}" 공고를 마감할까요?\n지원 링크가 닫히고 새 지원을 받지 않습니다. 지원자와 결과는 그대로 남습니다.`
+        : `"${posting.title}" 공고를 열까요?\n지원 링크로 새 지원을 받습니다.`
+    if (!window.confirm(ask)) return
+    setStatusBusy(true)
+    try {
+      const updated = await postingsApi.update(posting.id, { status: next })
+      /* PATCH 응답에는 단계별 집계가 없다(집계는 목록 쿼리만 한다) — 상태만 받는다 */
+      setPosting((p) => (p ? { ...p, status: updated.status, updated_at: updated.updated_at } : updated))
+      setAllPostings((list) => list.map((o) => (o.id === updated.id ? { ...o, status: updated.status } : o)))
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : '공고 상태를 바꾸지 못했습니다')
+    } finally {
+      setStatusBusy(false)
+    }
+  }
+
   const debounce = useRef<number | undefined>(undefined)
   useEffect(() => {
     window.clearTimeout(debounce.current)
@@ -213,6 +237,22 @@ export default function PostingApplicants() {
             <span className={`badge ${posting.status === 'open' ? 'badge-open' : 'badge-closed'}`}>
               {posting.status === 'open' ? '진행중' : posting.status === 'closed' ? '마감' : '작성중'}
             </span>
+          )}
+          {posting && (
+            <button
+              type="button"
+              className={styles.statusBtn}
+              disabled={statusBusy}
+              onClick={() => void changeStatus(posting.status === 'open' ? 'closed' : 'open')}
+            >
+              {statusBusy
+                ? '바꾸는 중…'
+                : posting.status === 'open'
+                  ? '공고 마감'
+                  : posting.status === 'closed'
+                    ? '다시 열기'
+                    : '공고 열기'}
+            </button>
           )}
 
           {/* 다른 공고로 바로 건너뛴다 — 목록으로 돌아갔다 다시 들어올 이유가 없다.
