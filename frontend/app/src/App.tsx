@@ -23,7 +23,6 @@ import Postings from './pages/Postings'
 import PostingApplicants from './pages/PostingApplicants'
 import Applicants from './pages/Applicants'
 import Interviews from './pages/Interviews'
-import Evaluations from './pages/Evaluations'
 import Summary from './pages/Summary'
 import SummaryDetail from './pages/SummaryDetail'
 import Settings from './pages/Settings'
@@ -106,7 +105,6 @@ export default function App() {
             <Route path="/calendar" element={<Interviews />} />
             {/* 옛 경로. 북마크·메일 링크가 깨지지 않게 남긴다 */}
             <Route path="/interviews" element={<LegacyCalendarRedirect />} />
-            <Route path="/evaluations" element={<Evaluations />} />
             <Route path="/summary" element={<Summary />} />
             <Route path="/summary/:applicationId" element={<SummaryDetail />} />
             <Route path="/settings" element={<Settings />} />

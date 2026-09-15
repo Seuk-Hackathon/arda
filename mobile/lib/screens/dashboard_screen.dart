@@ -31,10 +31,8 @@ class DashboardScreen extends StatefulWidget {
     super.key,
     this.today,
     this.onOpenCalendar,
-    this.onOpenReviews,
     this.onOpenApplicants,
     this.onOpenPostings,
-    this.onReviewWaiting,
     this.repository,
   });
 
@@ -44,13 +42,8 @@ class DashboardScreen extends StatefulWidget {
   /// 카드마다 이어지는 곳. 셸이 탭을 옮겨 준다 —
   /// 대시보드는 자기가 어느 탭에 앉아 있는지 몰라야 한다
   final VoidCallback? onOpenCalendar;
-  final VoidCallback? onOpenReviews;
   final VoidCallback? onOpenApplicants;
   final VoidCallback? onOpenPostings;
-
-  /// 받아 온 '내 리뷰 대기' 수를 셸에 알린다 — 더보기의 평가 현황 배지가
-  /// 같은 수를 쓴다. 같은 요청을 두 번 하지 않으려고 흘려 준다
-  final ValueChanged<int>? onReviewWaiting;
 
   /// 테스트가 가짜를 넣는 자리 (큐 8 4단계)
   final DashboardRepository? repository;
@@ -83,26 +76,21 @@ class _DashboardScreenState extends State<DashboardScreen> {
         widget.repository ??
         scope?.dashboard ??
         DashboardRepository(
-          authedClient(),
           scope?.postings ?? PostingRepository(authedClient()),
           scope?.schedules ?? ScheduleRepository(authedClient()),
         );
   }
 
   /// `ignore()` 이유는 postings_screen.dart 참고
-  Future<DashboardData> _load(int userId) {
-    final future = _repo.load(userId: userId, today: widget.today);
-    // 받아 온 뒤에 알린다 — 실패하면 아무 말도 안 한다(더보기 배지가 안 뜬다).
-    // 파생된 future 도 실패를 들고 있어 같이 흘려보낸다
-    future.then((d) => widget.onReviewWaiting?.call(d.reviewWaiting)).ignore();
-    return future..ignore();
+  Future<DashboardData> _load() {
+    return _repo.load(today: widget.today)..ignore();
   }
 
   void _reload() {
     final id = _loadedFor;
     if (id == null) return;
     setState(() {
-      _future = _load(id);
+      _future = _load();
     });
   }
 
@@ -114,7 +102,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     // 때마다 새 요청이 나간다
     if (me != null && _loadedFor != me.id) {
       _loadedFor = me.id;
-      _future = _load(me.id);
+      _future = _load();
     }
 
     final future = _future;
@@ -159,14 +147,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
         ),
         const SizedBox(height: AppSpace.s3),
 
-        // ② 내 리뷰 대기 — 이 앱을 켜는 가장 큰 이유. 화면에서 유일하게 채운 버튼
-        _Card(
-          child: _ReviewQueue(
-            count: data.reviewWaiting,
-            onTap: widget.onOpenReviews,
-          ),
-        ),
-        const SizedBox(height: AppSpace.s3),
+        // ② 「내 리뷰 대기」 카드가 여기 있었다 — 평가 현황으로 보내는 유일한
+        //   채운 버튼이었다. 2026-09-15 에 평가 현황과 함께 뺐다.
 
         // ③ 전체 현황 — 회사 합계 (2026-09-07, 웹 대시보드 개편을 따라감).
         //
@@ -581,123 +563,6 @@ class _InterviewRow extends StatelessWidget {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-/// 리뷰 대기 숫자·단위를 테스트가 집어 갈 손잡이.
-/// 범례에도 같은 숫자가 나올 수 있어 글자만으로는 특정할 수 없다.
-const reviewCountKey = Key('dashboard-review-count');
-const reviewUnitKey = Key('dashboard-review-unit');
-
-/// 내 리뷰 대기 — 큰 숫자 + 채운 버튼.
-///
-/// 화면에서 채운 버튼은 여기 하나다. 05-design §1 이 잎초록을 "버튼·링크·강조"에
-/// 쓰라고 했고, 대시보드에서 담당자가 실제로 **할 일**은 이것뿐이라 나머지 카드는
-/// 글자 링크로 두고 여기만 버튼으로 세운다.
-class _ReviewQueue extends StatelessWidget {
-  const _ReviewQueue({required this.count, this.onTap});
-
-  final int count;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                '내 리뷰 대기',
-                style: TextStyle(
-                  fontFamily: AppType.fontFamily,
-                  fontSize: AppType.sm,
-                  color: AppColors.textSub,
-                ),
-              ),
-              const SizedBox(height: AppSpace.s1),
-              // Text.rich 로 묶지 않는다 — 숫자와 단위를 따로 집어 확인할 수 있어야 하고,
-              // 범례에도 같은 숫자가 있어 텍스트만으로는 구별이 안 된다
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.baseline,
-                textBaseline: TextBaseline.alphabetic,
-                children: [
-                  Text(
-                    '$count',
-                    key: reviewCountKey,
-                    style: const TextStyle(
-                      fontFamily: AppType.fontFamily,
-                      // §2: 화면에서 제일 큰 글자 — display + 제목 그림자
-                      fontSize: AppType.display,
-                      fontWeight: FontWeight.w700,
-                      fontFeatures: AppType.tabularNums,
-                      color: AppColors.text,
-                      shadows: AppTextShadow.heading,
-                    ),
-                  ),
-                  const SizedBox(width: AppSpace.s1),
-                  const Text(
-                    '명',
-                    key: reviewUnitKey,
-                    style: TextStyle(
-                      fontFamily: AppType.fontFamily,
-                      fontSize: AppType.num,
-                      fontWeight: AppType.wRegular,
-                      color: AppColors.textSub,
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(width: AppSpace.s3),
-        _FilledButton(label: '평가하러 가기', onTap: onTap),
-      ],
-    );
-  }
-}
-
-/// 채운 버튼 — 잎초록 바탕 + 흰 글자.
-///
-/// 05-design §2: 색 채움 배경 위 밝은 글자에는 `--ts-onfill` 을 거의 항상 준다.
-/// §9: 높이 44 (터치 타깃).
-class _FilledButton extends StatelessWidget {
-  const _FilledButton({required this.label, this.onTap});
-
-  final String label;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: AppColors.leaf,
-      borderRadius: AppShape.ctl,
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTap,
-        // §1: 같은 자리의 press 는 한 톤 더 짙은 잎
-        highlightColor: AppColors.leafStrong,
-        splashColor: AppColors.leafStrong,
-        child: Container(
-          height: AppLayout.minTouchTarget,
-          padding: const EdgeInsets.symmetric(horizontal: AppSpace.s4),
-          alignment: Alignment.center,
-          child: Text(
-            label,
-            softWrap: false,
-            style: const TextStyle(
-              fontFamily: AppType.fontFamily,
-              fontSize: AppType.sm,
-              fontWeight: AppType.wSemiBold,
-              color: AppColors.bgElev,
-              shadows: AppTextShadow.onFill,
-            ),
-          ),
-        ),
       ),
     );
   }

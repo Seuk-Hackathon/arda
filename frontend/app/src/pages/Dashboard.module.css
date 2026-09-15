@@ -18,36 +18,16 @@
   white-space: nowrap;
 }
 
-.metaItem,
-.mine {
+.metaItem {
   display: flex;
   align-items: baseline;
   gap: 6px;
 }
 
-/* '나' 값만 시안색 + 누를 수 있다. 나머지는 회사 숫자라 표시 전용이다 */
-.mine {
-  padding: 2px var(--sp-2);
-  margin: -2px calc(var(--sp-2) * -1);
-  border-radius: var(--r-ctl);
-  transition: background var(--dur-fast) var(--ease);
-}
+/* 눌러서 할 일이 있던 '내 배정'(.mine)과 회사 숫자를 가르던 선(.metaBar)이
+   여기 있었다. 평가 현황을 지우면서 같이 뺐다 — 남은 둘은 둘 다 회사
+   숫자라 가를 것이 없다 (2026-09-15) */
 
-.mine:hover {
-  background: var(--bg-sunken);
-}
-
-.mine .metaLabel,
-.mine .metaVal {
-  color: var(--accent-text);
-}
-
-.metaBar {
-  width: 1px;
-  height: 20px;
-  flex: none;
-  background: var(--border-soft);
-}
 
 .metaLabel {
   font-size: var(--font-sm);
@@ -485,48 +465,14 @@ button.tr:focus-visible {
   }
 }
 
-/* ── 좁은 화면 전용: 내 배정 ─────────────────────────────
-   제목 띠의 요약 숫자는 폰 폭에 안 들어간다. 감추는 대신 '내 배정' 하나만
-   본문 맨 위로 내린다 — 이 화면에서 유일하게 눌러서 할 일이 있는 값이다. */
-.mobileMine {
-  display: none;
-}
+/* 좁은 화면에서 '내 배정' 하나만 본문 맨 위로 내리던 칸(.mobileMine*)이
+   여기 있었다. 평가 현황과 함께 뺐다 (2026-09-15) */
 
 @media (max-width: 768px) {
   /* 제목 띠에서 요약 숫자를 통째로 뺀다. 안 그러면 nowrap 이라 제목이
      '대…' 로 뭉개질 때까지 줄어든다 */
   .meta {
     display: none;
-  }
-
-  .mobileMine {
-    display: flex;
-    align-items: baseline;
-    gap: var(--sp-2);
-    padding: var(--sp-3) var(--sp-4);
-    background: var(--bg-elev);
-    backdrop-filter: var(--glass);
-    border: var(--border-w) solid var(--border);
-    border-radius: var(--r-card);
-  }
-
-  .mobileMineLabel {
-    font-size: var(--font-sm);
-    color: var(--text-sub);
-  }
-
-  .mobileMineVal {
-    font-family: var(--mono);
-    font-variant-numeric: tabular-nums;
-    font-size: var(--font-h2);
-    color: var(--accent-text);
-  }
-
-  .mobileMineGo {
-    margin-left: auto;
-    font-size: var(--font-sm);
-    color: var(--accent-text);
-    white-space: nowrap;
   }
 
   .totals {

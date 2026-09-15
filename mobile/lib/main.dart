@@ -14,7 +14,6 @@ import 'screens/applicant_shell.dart';
 import 'screens/applicants_screen.dart';
 import 'screens/interview_live_screen.dart';
 import 'screens/interview_screen.dart';
-import 'screens/evaluation_queue_screen.dart';
 import 'screens/evaluations_screen.dart';
 import 'screens/posting_form_screen.dart';
 import 'screens/settings_screen.dart';
@@ -118,7 +117,6 @@ class ArdaApp extends StatelessWidget {
         Routes.home: (_) => const HomeShell(),
         Routes.launch: (_) => LaunchScreen(auth: auth),
         Routes.login: (_) => LoginScreen(auth: auth),
-        Routes.evaluationQueue: (_) => const EvaluationQueueScreen(),
         Routes.settings: (_) => const SettingsScreen(),
         Routes.postingNew: (_) => const PostingFormScreen(),
         // 지원자 갈래 (2026-09-08) — 탭 셸 밖이다. 로그인한 사람이 없고

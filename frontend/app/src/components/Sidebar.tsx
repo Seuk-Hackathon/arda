@@ -49,8 +49,9 @@ const NAV = [
   { to: '/postings', label: '채용 공고', icon: 'postings' },
   { to: '/applicants', label: '지원자', icon: 'applicants' },
   { to: '/calendar', label: '캘린더', icon: 'calendar' },
-  { to: '/evaluations', label: '평가 현황', icon: 'evaluations' },
   { to: '/summary', label: '종합 평가', icon: 'evaluations' },
+  /* 「평가 현황」(평가 큐)은 2026-09-15 에 지웠다 — 평가는 지원자 상세에서
+     남긴다. 같은 일을 하는 자리가 둘이면 어느 쪽이 진짜인지 갈린다. */
   /* 설정은 우측 상단 계정 메뉴로 옮겼다 (2026-09-05) — 내비에는 일하는 화면만
      남긴다. 개인 설정 하나가 업무 화면들 사이에 껴 있던 것이 어색했다. */
 ] as const

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import PageHead from '../components/PageHead'
 import { ApiError } from '../api/client'
-import { assignments, interviews as interviewsApi, postings as postingsApi, schedules } from '../api/endpoints'
+import { interviews as interviewsApi, postings as postingsApi, schedules } from '../api/endpoints'
 import type { ActiveInterview, Interview, Posting, Stage } from '../api/types'
 import { useAuth } from '../auth/AuthContext'
 import styles from './Dashboard.module.css'
@@ -13,10 +13,13 @@ import styles from './Dashboard.module.css'
    위에서 아래로 얼마나 → 어디가 → 언제 순이다.
 
    부르는 API 는 셋뿐이고 전부 이미 열려 있다:
-     GET /postings                      → status · d_day · stage_counts
-     GET /schedules?from&to             → 확정 면접
-     GET /interviewers/{me}/applications → 내 배정 수
-   백엔드 변경 없음. */
+     GET /postings          → status · d_day · stage_counts
+     GET /schedules?from&to → 확정 면접
+     GET /interviews/active → 지금 면접 중인 것 (실패해도 화면은 뜬다)
+   백엔드 변경 없음.
+
+   `GET /interviewers/{me}/applications`(내 배정 수)를 2026-09-15 에 뺐다 —
+   아래 주석 참고. */
 
 /* 심사 중 3단. 같은 색상의 밝기 계단이라 이 순서가 곧 단계다 (05-design §1).
    합격·불합격은 여기 넣지 않는다 — 아래 DONE 참고. */
@@ -90,12 +93,14 @@ function ddayOf(v: number | null): { text: string; tone: string } {
   return { text: `D-${v}`, tone: styles.ddayCalm }
 }
 
+/* 「내 배정」 숫자가 여기 있었다. 2026-09-15 에 「평가 현황」을 지우면서 같이
+   뺐다 — 그 숫자의 일은 평가 큐로 보내는 것이었고, 큐가 없어지면 갈 데 없는
+   숫자만 남는다. `assignments.mine()` 호출도 같이 사라져 이 화면이 여는 요청이
+   넷에서 셋이 됐다. */
+
 interface Data {
   /** 지금 면접 중인 것들. 없으면 빈 배열 */
   live: ActiveInterview[]
-  /* 나에게 배정된 지원자 수. assignments.mine().count 는 배정 전체라
-     내가 이미 평가한 건도 들어간다 — 그래서 '리뷰 대기'가 아니라 '배정'이다 */
-  mine: number
   open: Posting[]
   /* 이번 주 확정 면접. mine 을 안 붙였으므로 회사 전체다 (ADR-0017) */
   week: Interview[]
@@ -115,18 +120,16 @@ export default function Dashboard() {
     const to = addDays(from, 7)
 
     Promise.all([
-      assignments.mine(user.id, ac.signal),
       postingsApi.list(ac.signal),
       schedules.interviews({ from: from.toISOString(), to: to.toISOString() }, ac.signal),
       /* 지금 진행 중인 면접. **실패해도 대시보드는 뜬다** — 이것 하나 때문에
          다른 숫자까지 안 보이면 안 된다 */
       interviewsApi.active(ac.signal).catch(() => [] as ActiveInterview[]),
     ])
-      .then(([assigned, all, ivs, live]) => {
+      .then(([all, ivs, live]) => {
         setError(null)
         setData({
           live,
-          mine: assigned.count,
           /* 진행 중 공고만 싣는다. 마감·초안의 지원자는 더 이상 움직이지 않아서
              현황에 섞으면 숫자만 부푼다 */
           open: all.filter((p) => p.status === 'open'),
@@ -211,13 +214,9 @@ export default function Dashboard() {
         title="대시보드"
         meta={
           <div className={styles.meta}>
-            {/* 이 화면에서 유일하게 '나' 인 숫자라 앞에 세우고 선으로 회사 숫자와 가른다 */}
-            <Link to="/evaluations" className={styles.mine}>
-              <span className={styles.metaLabel}>내 배정</span>
-              <b className={styles.metaVal}>{data?.mine ?? '—'}</b>
-              <span className={styles.metaUnit}>명</span>
-            </Link>
-            <span className={styles.metaBar} aria-hidden="true" />
+            {/* 「내 배정」이 맨 앞에 있었다(그리고 선으로 회사 숫자와 갈렸다).
+                평가 현황을 지우면서 같이 뺐다 — 여기 남은 둘은 회사 숫자라
+                가를 것이 없어 선도 없앴다 */}
             <span className={styles.metaItem}>
               <span className={styles.metaLabel}>진행 중 공고</span>
               <b className={styles.metaVal}>{data?.open.length ?? '—'}</b>
@@ -235,13 +234,9 @@ export default function Dashboard() {
       <main className={`page-content ${styles.page}`}>
         {error !== null && <p className={styles.state} role="alert">{error}</p>}
 
-        {/* 좁은 화면 전용 — 제목 띠의 요약 숫자가 폰 폭에 안 들어가 감춰진다.
-            그중 '내 배정' 만 여기로 내린다: 나머지 둘은 아래 카드가 이미 말한다 */}
-        <Link to="/evaluations" className={styles.mobileMine}>
-          <span className={styles.mobileMineLabel}>내 배정</span>
-          <b className={styles.mobileMineVal}>{data?.mine ?? '—'}<span className={styles.metaUnit}>명</span></b>
-          <span className={styles.mobileMineGo}>평가하러 가기 →</span>
-        </Link>
+        {/* 좁은 화면에서 '내 배정' 만 여기로 내려 보여 주던 칸이 있었다.
+            평가 현황과 함께 뺐다 — 제목 띠에 남은 둘(진행 중 공고·이번 주
+            면접)은 아래 카드가 이미 말하므로 내려 보낼 것이 없다. */}
 
         {/* ── 1. 전체 현황 ───────────────────────────────────── */}
         <section className={styles.card} aria-labelledby="dash-total">
