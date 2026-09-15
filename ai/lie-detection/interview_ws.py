@@ -203,15 +203,20 @@ def _pcm_to_wav(pcm: bytes) -> bytes:
 
 
 def _transcribe_openai(pcm: bytes, hint: str = "") -> str:
-    """OpenAI 전사 API. 실패하면 예외를 던진다 — 부르는 쪽이 로컬로 물러설지 정한다."""
+    """OpenAI 전사 API. 실패하면 예외를 던진다 — 부르는 쪽이 로컬로 물러설지 정한다.
+
+    **hint 를 넘기지 않는다** (2026-09-15, 세션 77 실측). OpenAI Whisper API 는 짧은
+    발화·무음에서 `prompt` 로 준 텍스트를 **그대로 답변으로 뱉는 hallucination** 이
+    특히 잦다 — 세션 77 에서 "가나다라마바사" 만 말한 답변이 Q3 질문 원문을 그대로
+    답변으로 저장했다(seq=2 · seq=5 두 번). 로컬 whisper(`_run_transcribe`)는 앞 문맥
+    로부터 문법 확률을 얻는 방식이라 힌트가 유의미하지만, API 는 프롬프트에 단순히
+    끌려간다. 결과 정확도 개선치보다 오염 위험이 크다.
+    """
     import httpx
 
     data = {"model": OPENAI_STT_MODEL, "response_format": "json"}
     if STT_LANGUAGE:
         data["language"] = STT_LANGUAGE
-    # 면접 질문 힌트. 로컬의 `initial_prompt` 와 같은 자리다.
-    if hint:
-        data["prompt"] = hint
     r = httpx.post(
         OPENAI_STT_URL,
         headers={"Authorization": f"Bearer {_api_key()}"},
