@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from datetime import date
 from app.adapter.outbound.pg.hiring_pg_repository import PgHiringRepository
 
 logger = logging.getLogger(__name__)
@@ -99,10 +100,22 @@ def sources_of(app, db=None) -> dict[str, str]:
         if posting:
             requirements = posting.description or ""
 
+    profile_parts = []
+    if app.birth_date:
+        today = date.today()
+        age = today.year - app.birth_date.year - (
+            (today.month, today.day) < (app.birth_date.month, app.birth_date.day)
+        )
+        profile_parts.append(f"만 나이: {age}세 (생년월일 {app.birth_date})")
+    if getattr(app, "gender", None):
+        _GENDER_KO = {"male": "남성", "female": "여성", "other": "기타"}
+        profile_parts.append(f"성별: {_GENDER_KO.get(app.gender, app.gender)}")
+
     return {
         "cover_letter": "\n\n".join(p for p in (app.self_intro, cover_file) if p),
         "resume": "\n\n".join(resume_parts),
         "requirements": requirements,
+        "profile": "\n".join(profile_parts),
     }
 
 
