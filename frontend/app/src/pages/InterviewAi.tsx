@@ -177,11 +177,29 @@ function ReadyBody(props: {
   const name = data.applicant_name
 
   // 앱과 같은 상태 분기. `started` 는 웹만의 UI 상태 — 지원자가 시작 버튼을 눌러
-  // 훅을 켰는지. `data.status` 가 이미 in_progress 여도 (새로고침 등) 다시
-  // 시작하기를 요구하지 않고 바로 실시간 흐름으로 넘긴다.
+  // 훅을 켰는지.
   const showConsent = data.status === 'pending' && data.consent_required
-  const showReady = data.status === 'pending' && !data.consent_required && !started
-  const showLive = (data.status === 'in_progress' || started) && data.status !== 'done' && data.status !== 'expired'
+
+  /* **서버가 이미 `in_progress` 여도, 이 화면에서 시작을 누르기 전까지는 준비
+     화면이다** (2026-09-15).
+
+     전에는 곧장 실시간 화면으로 넘겼다. 그런데 훅은 `started` 로만 켜지므로
+     (`useAiInterview(started ? token : null)`) **카메라도 소켓도 없는 죽은
+     화면**이 떴다 — 까만 칸에 「준비 중」만 남고 질문이 영영 안 온다.
+     프로덕션 실측에서 나왔고, 로컬에서 그대로 재현했다(video 는 있는데
+     srcObject 가 null).
+
+     세션이 열린 채 남는 경로가 흔하다: **새로고침·창 닫기는 `/finish` 를
+     안 부른다**(useAiInterview 는 「면접 끝내기」에서만 부른다). 그래서 이
+     상태로 다시 들어오는 것이 드문 일이 아니다.
+
+     자동으로 켜지 않는 이유는 2026-09-14 에 정한 것 그대로다 — 옛 웹은 링크
+     클릭만으로 카메라가 켜져, 지원자가 무엇이 시작되는지 모른 채 권한 팝업을
+     마주쳤다. 한 번 더 누르게 한다. */
+  const showReady =
+    !started && !showConsent && (data.status === 'pending' || data.status === 'in_progress')
+
+  const showLive = started && data.status !== 'done' && data.status !== 'expired'
   const showDone = data.status === 'done'
   const showExpired = data.status === 'expired'
 
@@ -195,7 +213,7 @@ function ReadyBody(props: {
       )}
 
       {showReady && (
-        <ReadyPanel busy={pending} onStart={onStart} />
+        <ReadyPanel busy={pending} onStart={onStart} resume={data.status === 'in_progress'} />
       )}
 
       {showLive && (
@@ -239,16 +257,28 @@ function ConsentPanel({ busy, onAgree }: { busy: boolean; onAgree: () => void })
   )
 }
 
-function ReadyPanel({ busy, onStart }: { busy: boolean; onStart: () => void }) {
+/* `resume` — 서버에 세션이 이미 열려 있는 경우. **그런 적 없는 것처럼 쓰지
+   않는다**: 지원자는 자기가 아까 시작했던 것을 기억하므로, 「시작하기」만
+   덩그러니 두면 처음부터 다시 하는 것인지 헷갈린다 */
+function ReadyPanel({
+  busy,
+  onStart,
+  resume,
+}: {
+  busy: boolean
+  onStart: () => void
+  resume: boolean
+}) {
   return (
     <>
       <p className={styles.help}>
-        준비되시면 아래 버튼을 눌러 시작하세요. 시작 후 카메라와 마이크 권한을
-        허용해 주세요.
+        {resume
+          ? '면접이 아직 열려 있습니다. 아래 버튼을 누르면 이어서 진행합니다. 카메라와 마이크 권한을 허용해 주세요.'
+          : '준비되시면 아래 버튼을 눌러 시작하세요. 시작 후 카메라와 마이크 권한을 허용해 주세요.'}
       </p>
       <div className={styles.actions}>
         <button type="button" className="btn btn-primary" disabled={busy} onClick={onStart}>
-          시작하기
+          {resume ? '이어서 하기' : '시작하기'}
         </button>
       </div>
     </>
