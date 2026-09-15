@@ -3,7 +3,7 @@
 /// 담당자 셸([HomeShell])과 **완전히 다른 앱처럼** 돈다: 탭도, 상단 바 제목도,
 /// 부르는 API 도 겹치지 않는다. 지원자는 담당자 화면을 한 조각도 보면 안 된다.
 ///
-///   인적성 · 일정 · **홈** · 면접 · 더보기
+///   인적성 · 일정 · **홈** · 면접 · 내 정보
 ///
 /// 홈이 가운데인 이유는 담당자 셸과 같다 — 어디서든 돌아오는 자리고 엄지가
 /// 제일 편하다. 왼쪽은 "먼저 하는 것"(인적성 → 일정 조율), 오른쪽은 "그다음"
@@ -50,7 +50,10 @@ enum ApplicantTab implements NavTab {
   schedule(Icons.event_available_outlined, '일정', '면접 시간 조율'),
   home(Icons.home_outlined, '홈', '내 지원'),
   interview(Icons.videocam_outlined, '면접', 'AI 면접'),
-  more(Icons.menu, '더보기', '더보기');
+  // 2026-09-15 — '더보기' 를 '내 정보' 로. 이름·지원 현황·로그아웃이
+  // 들어 있어 내용이 정해진 탭인데, '더보기' 와 햄버거는 '여기 말고 더 있다' 는
+  // 뜻이라 무엇이 있는지 안 알려 준다.
+  more(Icons.person_outline, '내 정보', '내 정보');
 
   const ApplicantTab(this.icon, this.label, this.title);
 
