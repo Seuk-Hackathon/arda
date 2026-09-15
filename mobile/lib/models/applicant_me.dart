@@ -29,6 +29,26 @@ class TokenLink {
   final DateTime? expiresAt;
 }
 
+/// 여러 개 중 **지금 열어야 하는 것** 하나.
+///
+/// 재발송하면 같은 종류가 여러 개 온다(서버가 id 순으로 준다). 규칙:
+///
+/// 1. **아직 할 일이 남은 것 중 새 것.** 뒤에서부터 훑어 첫 non-done 을 잡는다 —
+///    앞에서부터 잡으면 새로 받은 방을 두고 옛 방을 연다(2026-09-09 사고).
+/// 2. 다 끝났으면 마지막 것. 화면이 "완료" 라고 말할 수 있어야 한다 —
+///    null 을 주면 "아직 없습니다" 가 되어 방금 마친 사람이 헷갈린다.
+///
+/// **한 곳에만 둔다.** 홈과 셸이 서로 다르게 고르다가
+/// 두 화면이 다른 세션을 보는 사고가 났다(2026-09-15) — 홈은 「3일 남음」,
+/// 탭은 「기한이 지났습니다」.
+TokenLink? pickLink(List<TokenLink> links) {
+  if (links.isEmpty) return null;
+  for (final l in links.reversed) {
+    if (l.status != 'done') return l;
+  }
+  return links.last;
+}
+
 TokenLink _link(Map<String, dynamic> json) => TokenLink(
   token: json['token'] as String,
   status: json['status'] as String? ?? '',

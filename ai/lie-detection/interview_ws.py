@@ -53,23 +53,22 @@ SAMPLE_WIDTH = 2  # 16-bit
 # 실제 값은 폰 실측으로 정한다. 재배포 없이 바꿀 수 있게 환경변수로 열어 둔다.
 SILENCE_END_SEC = float(os.getenv("SILENCE_END_SEC", "3.0"))
 
-# ── 답변 끝은 지원자가 정한다 (2026-09-11 개정) ────────────────────
-# **조용해진 것만으로는 답변을 끝내지 않는다.** 3초 침묵으로 넘기던 때는 문장
-# 사이에 생각하느라 쉰 순간 끊겨 답이 반토막 나거나, 폰 스피커 소리·잡음이 질문을
-# 넘겼다(세션 57 · 59). 이제 끝은 지원자가 정한다 — [답변 완료] 를 누르거나
-# **"이상입니다"** 라고 말하거나. 위 SILENCE_END_SEC 는 담당자 화면(`/ws/live`)의
-# 말함·조용 표시에만 남는다.
+# ── 답변 끝은 [답변 완료] 버튼이 정한다 (2026-09-15 개정 · 09-11 판을 다시 고침) ──
+# **조용해진 것만으로는 답변을 끝내지 않는다**(09-11). 3초 침묵으로 넘기던 때는 문장
+# 사이에 쉰 순간 답이 반토막 나거나 폰 스피커 소리·잡음이 질문을 넘겼다(세션 57·59).
+# 09-11 판은 "이상입니다" 로도 끝냈는데, 그 확인용 전사가 무음에 "이상입니다" 를
+# 지어내(whisper hallucination) 답변을 강제로 끊는 사고가 났다(세션 77 · YL4qeYLK).
+# 2026-09-15 부터 **버튼과 상한만** 남긴다. 위 SILENCE_END_SEC 는 담당자 화면
+# (`/ws/live`)의 말함·조용 표시에만 남는다.
 #
-# 면접 소켓에서 "멈춤" 으로 볼 침묵. 끝이 아니라 **"이상입니다" 를 확인해 볼 때**
-# 라서 짧게 잡는다 — 말한 뒤 이만큼 + 끝부분 받아쓰기(1~2초) 뒤에 넘어간다.
+# 면접 소켓 감지기가 "멈춤" 으로 볼 침묵. 이제 답변을 끝내는 데는 안 쓰이고,
+# `listening` 배지와 말하는 동안만 도는 판정(`due_for_verdict`)의 기준일 뿐이다.
 PAUSE_CHECK_SEC = float(os.getenv("PAUSE_CHECK_SEC", "1.2"))
-# 멈췄을 때 받아써 볼 끝부분. 뒤의 침묵(PAUSE_CHECK_SEC)을 포함하므로 말은 약 3초치.
-END_TAIL_SEC = float(os.getenv("END_TAIL_SEC", "4.0"))
-# 답변 하나의 상한. 버튼도 "이상입니다" 도 없이 이만큼 이어지면 끊는다. 첫 말부터
-# 센다. 전사 상한(STT_TIMEOUT_SEC 180초, CPU 약 1.8배속)에 맞췄다.
+# 답변 하나의 상한. 버튼 없이 이만큼 이어지면 끊는다. 첫 말부터 센다.
 MAX_ANSWER_SEC = float(os.getenv("MAX_ANSWER_SEC", "180"))
-# "이상입니다" 로 볼 말. 띄어쓰기·문장부호는 떼고 **끝이 이것으로 끝나는지** 본다 —
-# "3초 이상입니다. 그래서…" 처럼 말 중간에 나온 것은 끝이 아니다.
+# 저장할 답변 글 끝의 "이상입니다" 류는 뗀다 — 답변 내용이 아니라 습관적 마무리다.
+# 띄어쓰기·문장부호는 떼고 **끝이 이것으로 끝나는지** 본다 — "3초 이상입니다.
+# 그래서…" 처럼 말 중간에 나온 것은 남긴다.
 END_PHRASES = (
     "이상입니다",
     "이상이에요",
@@ -160,6 +159,97 @@ STT_BEAM_SIZE = int(os.getenv("STT_BEAM_SIZE", "1"))
 # (테라폼·코틀린·러스트·선호), 없는 낱말 60개를 넣어도 전사가 그대로였다.
 # `initial_prompt` 는 whisper 문맥의 절반(224 토큰)까지만 쓰이므로 여기서 자른다.
 STT_HINT_CHARS = int(os.getenv("STT_HINT_CHARS", "200"))
+
+# ── 전사를 어디서 하는가 (2026-09-15, ADR-0038) ───────────────────
+# 백엔드(`app/agent/stt.py`)와 **같은 변수**를 읽는다 — 이 컨테이너도 backend/.env 를
+# 통째로 받으므로 "오디오가 밖으로 나가는가" 는 한 곳에서 한 번만 정한다.
+#   openai         : OpenAI 전사 API. 2 vCPU 서버에서 44초 발화가 180초를 넘겨 자리표시자로
+#                    저장되던 것(세션 75 실측)이 API 로는 몇 초에 끝난다. 줄(`_stt_running`)에
+#                    서지 않는다 — CPU 를 안 쓰니 겹쳐 돌아도 서로 느려지지 않는다.
+#   faster_whisper : 로컬(위 STT_MODEL). GPU 가 있거나 오디오를 밖으로 못 보낼 때.
+# 값이 없거나 키가 없으면 로컬로 돈다 — 조용히 API 로 새지 않는다.
+# 로컬 모델(STT_MODEL)이 같이 켜져 있으면 API 실패 시 그쪽으로 물러선다.
+STT_BACKEND = os.getenv("STT_BACKEND", "").strip().lower()
+OPENAI_STT_MODEL = os.getenv("WHISPER_MODEL", "whisper-1").strip() or "whisper-1"
+OPENAI_STT_URL = os.getenv(
+    "OPENAI_STT_URL", "https://api.openai.com/v1/audio/transcriptions"
+)
+# API 한 번의 상한. 3분 발화도 API 는 십수 초라 넉넉히 둔다.
+OPENAI_STT_TIMEOUT_SEC = float(os.getenv("OPENAI_STT_TIMEOUT_SEC", "60"))
+# whisper-1 은 무음·잡음 구간에도 "감사합니다" 같은 말을 지어낸다(세션 77 실측:
+# "컵 라인이 사용이 더 어려웠어요 인생도…"). `verbose_json` 의 조각마다 오는
+# `no_speech_prob` 가 이 값 이상이면 그 조각을 버린다. 로컬 whisper 의 `vad_filter`
+# 에 해당하는 안전판이다 — API 에는 그 옵션이 없다.
+STT_NO_SPEECH_MAX = float(os.getenv("STT_NO_SPEECH_MAX", "0.6"))
+
+
+def _api_key() -> str:
+    """키는 부를 때 읽는다 — 테스트가 환경변수를 바꿔 끼울 수 있게."""
+    return os.getenv("OPENAI_API_KEY", "").strip()
+
+
+def stt_via_api() -> bool:
+    """전사를 OpenAI API 로 하는가. 설정과 키가 **둘 다** 있어야 참이다."""
+    return STT_BACKEND == "openai" and bool(_api_key())
+
+
+def _pcm_to_wav(pcm: bytes) -> bytes:
+    """16kHz·16-bit·mono PCM 에 WAV 머리를 붙인다. API 는 날것 PCM 을 받지 않는다."""
+    import io
+    import wave
+
+    usable = len(pcm) - (len(pcm) % SAMPLE_WIDTH)
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(SAMPLE_WIDTH)
+        w.setframerate(SAMPLE_RATE)
+        w.writeframes(pcm[:usable])
+    return buf.getvalue()
+
+
+def _transcribe_openai(pcm: bytes, hint: str = "") -> str:
+    """OpenAI 전사 API. 실패하면 예외를 던진다 — 부르는 쪽이 로컬로 물러설지 정한다.
+
+    **hint 를 넘기지 않는다** (2026-09-15, 세션 77 실측). OpenAI Whisper API 는 짧은
+    발화·무음에서 `prompt` 로 준 텍스트를 **그대로 답변으로 뱉는 hallucination** 이
+    특히 잦다 — 세션 77 에서 "가나다라마바사" 만 말한 답변이 Q3 질문 원문을 그대로
+    답변으로 저장했다(seq=2 · seq=5 두 번). 로컬 whisper(`_run_transcribe`)는 앞 문맥
+    로부터 문법 확률을 얻는 방식이라 힌트가 유의미하지만, API 는 프롬프트에 단순히
+    끌려간다. 결과 정확도 개선치보다 오염 위험이 크다.
+    """
+    import httpx
+
+    data = {"model": OPENAI_STT_MODEL, "response_format": "verbose_json"}
+    if STT_LANGUAGE:
+        data["language"] = STT_LANGUAGE
+    r = httpx.post(
+        OPENAI_STT_URL,
+        headers={"Authorization": f"Bearer {_api_key()}"},
+        data=data,
+        files={"file": ("answer.wav", _pcm_to_wav(pcm), "audio/wav")},
+        timeout=OPENAI_STT_TIMEOUT_SEC,
+    )
+    r.raise_for_status()
+    return _text_without_silence(r.json())
+
+
+def _text_without_silence(body: dict) -> str:
+    """API 응답에서 **무음에 지어낸 조각을 뺀** 글.
+
+    `verbose_json` 은 조각(segment)마다 `no_speech_prob` 를 준다. STT_NO_SPEECH_MAX
+    이상인 조각은 버리고 나머지를 잇는다. 조각 정보가 없는 응답(다른 모델·형식)은
+    `text` 를 그대로 쓴다 — 거르지 못할 뿐 답변을 잃지는 않는다.
+    """
+    segments = body.get("segments")
+    if not isinstance(segments, list):
+        return (body.get("text") or "").strip()
+    kept = [
+        (s.get("text") or "").strip()
+        for s in segments
+        if float(s.get("no_speech_prob") or 0.0) < STT_NO_SPEECH_MAX
+    ]
+    return " ".join(t for t in kept if t).strip()
 
 
 def _rms(pcm: bytes) -> float:
@@ -425,15 +515,13 @@ class InterviewSession:
 
     def __init__(self, token: str) -> None:
         self.token = token
-        # 면접 소켓의 감지기는 **끝이 아니라 멈춤**을 잰다 (2026-09-11) — 멈추면
-        # "이상입니다" 를 확인할 뿐 넘기지 않는다(app.py `_check_end_phrase`).
+        # 면접 소켓의 감지기는 답변을 끝내지 않는다(2026-09-15). `listening` 배지와
+        # 말하는 동안만 도는 판정의 기준으로만 쓴다.
         self.detector = _SpeechDetector(silence_sec=PAUSE_CHECK_SEC)
         self.audio: list[bytes] = []
         # 이 답변의 첫 말 시각. 답변 하나의 상한(MAX_ANSWER_SEC)을 여기서 센다.
         self.answer_started: float | None = None
-        # 멈출 때 도는 "이상입니다" 확인. 한 번에 하나만 돈다.
-        self.end_check: asyncio.Task | None = None
-        # 답변 하나를 끝내는 중. 그 사이 버튼 · "이상입니다" · 상한이 겹쳐도 한 번만 끝낸다.
+        # 답변 하나를 끝내는 중(전사 대기 포함). 그 사이 버튼·상한이 겹쳐도 한 번만 끝낸다.
         self.finishing = False
         self.frames: list = []
         self._frame_count = 0
@@ -456,19 +544,13 @@ class InterviewSession:
         # 재탐색한다 — 폰을 돌리거나 눕히면 그 각도로는 영원히 실패하는 것을 막는다.
         self.frame_rotation: int | None = None
         self._last_face_time: float = 0.0
-        # 전사가 도는 동안 판정을 쉬게 하는 표시 (app.py `_transcribe_pump`).
-        # 둘이 같은 CPU 를 다투면 전사가 45초 제한을 넘긴다 — 2026-09-10 실측.
-        #
-        # **#138 로 오히려 더 필요해졌다.** 전사가 대기줄로 빠지면서 지원자가
-        # 다음 질문에 답하는 **동안** 뒤에서 돌기 때문에, 초당 판정과 겹치는
-        # 시간이 예전보다 길다.
+        # 전사가 도는 동안 판정을 쉬게 하는 표시 (app.py `_end_answer`). 둘이 같은
+        # CPU 를 다투면 로컬 전사가 제한을 넘긴다 — 2026-09-10 실측. API 전사에서는
+        # CPU 를 안 쓰지만 표시는 그대로 둔다(로컬 폴백이 남아 있다).
         self.transcribing = False
-        # 질문 전체와 지금 몇 번째인가. 비어 있으면 예전 방식(전사를 기다림)으로 돈다.
+        # 질문 전체와 지금 몇 번째인가. 비어 있으면 백엔드가 준 "지금 질문" 을 그대로 쓴다.
         self.questions: list[dict] = []
         self.cursor = 0
-        # 전사 대기줄. **지원자를 기다리게 하지 않으려고** 여기에 넣고 다음 질문을
-        # 먼저 보낸다. 세션마다 하나라 한 사람의 답변은 낸 순서대로 저장된다.
-        self.pending: asyncio.Queue = asyncio.Queue()
         # 지원자 목소리 지문 (speaker_match). 첫 답변에서 뜨고 면접이 끝나면 사라진다.
         self.voiceprint = None
         # 답변이 통째로 남의 목소리로 보인 횟수가 연달아 몇 번인가.
@@ -993,8 +1075,12 @@ def warm_stt() -> None:
     **실패해도 서비스를 죽이지 않는다.** `model()`(판정 모델)은 없으면 뜰 때
     죽는 편이 낫지만, 전사는 없어도 면접이 돈다(자리표시자로 내려앉는다).
     """
+    if stt_via_api():
+        logger.info("전사: OpenAI API (%s)%s", OPENAI_STT_MODEL,
+                    " · 로컬 폴백 " + STT_MODEL if STT_MODEL else "")
     if not STT_MODEL:
-        logger.info("전사 꺼짐 — 예열하지 않는다")
+        if not stt_via_api():
+            logger.info("전사 꺼짐 — 예열하지 않는다")
         return
     started = time.monotonic()
     try:
@@ -1043,6 +1129,17 @@ def transcribe(pcm: bytes, hint: str = "") -> str:
     그 질문은 답한 것이 되어 다시 물어볼 길이 없어진다.
     """
     seconds = len(pcm) / (SAMPLE_RATE * SAMPLE_WIDTH)
+    if stt_via_api():
+        # 줄에 서지 않는다 — CPU 가 아니라 API 를 기다리는 것이라 겹쳐도 안 느려진다
+        try:
+            return _transcribe_openai(pcm, hint)
+        except Exception:
+            # 망·한도·5xx. 로컬 모델이 있으면 그쪽으로, 없으면 자리표시자 — 답변을
+            # 잃지 않는다. 빈 문자열은 "말이 없었다" 는 뜻이라 여기서 쓰지 않는다.
+            logger.exception("OpenAI 전사 실패 (발화 %.1f초)%s", seconds,
+                             " — 로컬로 물러선다" if STT_MODEL else "")
+            if not STT_MODEL:
+                return f"[전사 불가 · 발화 {seconds:.1f}초]"
     if not STT_MODEL:
         return f"[전사 꺼짐 · 발화 {seconds:.1f}초]"
 
@@ -1082,26 +1179,22 @@ def _run_transcribe(model, audio, hint: str = "") -> str:
 
 
 # ── 답변인가 (2026-09-11) ─────────────────────────────────────
-# 발화 끝을 가르는 감지기(`_SpeechDetector`)는 **소리 크기**만 본다. 폰 스피커로
-# 나오는 담당자 쪽 방 소리·잡음도 0.7초만 넘으면 "답변 끝" 이 되는데, 그 순간 질문을
-# 답한 것으로 찍으면(`mark_answered`) 전사가 비어도 질문이 넘어간다 — 2026-09-11
-# 세션 57 에서 58초 만에 질문 10개가 전사 0자로 소진됐다(세션 56 의 6~10번도 같다).
-# 그래서 넘기기 전에 **전사와 같은 VAD**(faster-whisper 의 silero)로 사람 목소리가
-# 있는지 잰다. 이 VAD 가 아무것도 못 찾으면 전사도 빈 문자열이다 — 답변이 아니다.
-MIN_VOICE_SEC = float(os.getenv("MIN_VOICE_SEC", "0.3"))
+# 답변인지는 **전사 결과로** 가른다 (2026-09-15 개정). 09-11 판은 넘기기 전에 silero
+# VAD 로 사람 목소리를 쟀는데(세션 57: 잡음이 질문 10개를 빈 답변으로 소진), 그 VAD 가
+# 앱이 보내는 소리를 자주 "목소리 0초" 로 봐서 실제 답변이 계속 튕겼다(09-15 실기기,
+# 세션 YL4qeYLK: 9번 눌러 8번 거부). 이제 소리는 재지 않는다 — 받아쓴 글이 비면
+# `retry`, 있으면 저장한다. 무음에 지어낸 말은 전사 층에서 거른다
+# (`_text_without_silence` · `STT_NO_SPEECH_MAX`).
 
-# 밖에서 갈라 볼 계기판 (`/health`) — 넘긴 것 · 거른 것 · 못 잰 것(→ 막지 않고 넘김).
-# 질문이 안 넘어간다는 말이 나오면 `rejected` 가 느는지부터 본다.
+# 밖에서 갈라 볼 계기판 (`/health`). "답변이 안 넘어간다" 는 말이 나오면 `empty` 가
+# 느는지부터 본다 — 소리는 오는데 전사가 비는 것이다.
 ANSWER_STATS = {
-    "voiced": 0,
-    "rejected": 0,
-    "unmeasured": 0,
-    # 답변이 어떻게 끝났나 (2026-09-11) — [답변 완료] · "이상입니다" · 상한.
-    # "넘어가지 않는다" 는 말이 나오면 pause_checks 가 느는데 by_phrase 가 0 인지부터 본다.
+    # 전사가 있어 저장한 답변 · 전사가 비어 되돌린 답변
+    "saved": 0,
+    "empty": 0,
+    # 답변이 어떻게 끝났나 — [답변 완료] · 상한(180초)
     "by_button": 0,
-    "by_phrase": 0,
     "by_limit": 0,
-    "pause_checks": 0,
     # 목소리 대조 (speaker_match · 2026-09-11). `voice_enrolled` 가 0 이면 대조가
     # 아예 안 돈 것이다 — 모델 파일이 없거나 3초 넘게 이어 말한 답변이 없었다.
     "voice_enrolled": 0,
@@ -1109,29 +1202,6 @@ ANSWER_STATS = {
     "voice_reenrolled": 0,
     "voice_disabled": 0,
 }
-
-
-def voice_seconds(pcm: bytes) -> float | None:
-    """발화 안에 사람 목소리가 몇 초 있나. 못 재면 None — **그때는 막지 않는다.**
-
-    VAD 가 고장 났다고 면접이 멈추면 안 된다. 못 재면 예전처럼 넘긴다.
-    전사가 쓰는 것과 같은 판정 기준(`VadOptions` 기본값)이고, 앞뒤 여백
-    (`speech_pad_ms`)만 빼서 목소리 길이 자체를 잰다. 수십 ms 걸린다.
-    """
-    usable = len(pcm) - (len(pcm) % SAMPLE_WIDTH)
-    if usable == 0:
-        return 0.0
-    try:
-        from faster_whisper.vad import VadOptions, get_speech_timestamps
-
-        audio = np.frombuffer(pcm[:usable], dtype=np.int16).astype(np.float32) / 32768.0
-        spans = get_speech_timestamps(
-            audio, VadOptions(speech_pad_ms=0), sampling_rate=SAMPLE_RATE
-        )
-    except Exception:
-        logger.exception("목소리 재기 실패 — 막지 않고 넘긴다")
-        return None
-    return sum(s["end"] - s["start"] for s in spans) / SAMPLE_RATE
 
 
 def _plain(text: str) -> str:
@@ -1161,38 +1231,3 @@ def strip_end_phrase(text: str) -> str:
     # 쉼표로 이어 붙인 것("…습니다, 이상입니다")은 쉼표까지 뗀다
     stripped = re.sub(rf"\s*(?:{alts})[\s.,!?·…~]*$", "", text)
     return stripped.rstrip(" ,·~").strip()
-
-
-def says_done(pcm: bytes) -> bool | None:
-    """발화 끝부분에 "이상입니다" 가 있나. 못 재면 None — 그때는 버튼·상한만 남는다.
-
-    **전사 줄(`_stt_running`)에 서지 않는다.** 앞 답변의 긴 전사가 몇 분씩 도는
-    동안 이 확인이 뒤에 서면 "이상입니다" 가 몇 분 늦게 먹는다. 끝부분 몇 초라
-    CPU 로 1~2초이고, faster-whisper 는 동시 호출을 조각 단위로 번갈아 돌린다.
-    질문 힌트(`initial_prompt`)는 주지 않는다 — 찾는 것은 정해진 한 마디다.
-    """
-    if not STT_MODEL:
-        return None
-    model = _stt_model()
-    if model is None:
-        return None
-    need = int(END_TAIL_SEC * SAMPLE_RATE) * SAMPLE_WIDTH
-    tail = pcm[-need:]
-    usable = len(tail) - (len(tail) % SAMPLE_WIDTH)
-    if usable == 0:
-        return False
-    audio = np.frombuffer(tail[:usable], dtype=np.int16).astype(np.float32) / 32768.0
-    try:
-        segments, _ = model.transcribe(
-            audio,
-            language=STT_LANGUAGE or None,
-            beam_size=1,
-            vad_filter=True,
-            condition_on_previous_text=False,
-            without_timestamps=True,
-        )
-        text = " ".join(s.text.strip() for s in segments)
-    except Exception:
-        logger.exception("'이상입니다' 확인 실패 — 버튼·상한으로만 끝난다")
-        return None
-    return ends_with_phrase(text)

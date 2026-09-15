@@ -111,6 +111,18 @@ class DeviceMicService implements MicService {
           echoCancel: true,
           noiseSuppress: true,
           autoGain: true,
+          // **안드로이드 오디오 소스를 명시** (2026-09-15). default 소스는 삼성
+          // 기기에서 시작 직후 두 번 close 당한다(logcat `PCM_RECORD stream
+          // was closed`).
+          //
+          // 처음에는 `voiceCommunication`(VOIP_RECORD) 로 잡았는데, 통화용 필터가
+          // **사람 목소리도 지나치게 억제**해 조용한 환경 발화도 서버 VAD 가 "목소리
+          // 0.00초" 로 반복 거부했다(세션 YL4qeYLK 실측: 8건 rejected). 대신
+          // `voiceRecognition` — 음성 인식 앱(구글 어시스턴트 등)이 쓰는 소스로,
+          // 배경 소음 억제는 하되 사람 말을 살린다.
+          androidConfig: AndroidRecordConfig(
+            audioSource: AndroidAudioSource.voiceRecognition,
+          ),
         ),
       );
     } on Exception catch (e) {

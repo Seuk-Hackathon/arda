@@ -340,6 +340,11 @@ def get_session(
         turns=sorted(session.turns, key=lambda t: t.seq),
         findings=sorted(session.findings, key=lambda f: f.id),
         findings_enabled=findings_on(),
+        # 2026-09-14: 종합 평가 상세 페이지가 이 필드를 쓰는데 옛 응답에는 빠져 있었다
+        # — 스키마에는 있고 DB 에는 값이 있는데 응답에서 누락돼 "장점·우려 없음" 으로만 뜸.
+        ai_score=session.ai_score,
+        ai_score_detail=session.ai_score_detail,
+        scored_at=session.scored_at,
     )
 
 

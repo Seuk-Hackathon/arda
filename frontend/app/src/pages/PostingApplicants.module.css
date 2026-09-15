@@ -546,6 +546,28 @@
 .jobBtn:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
 .jobBtn svg { width: 11px; height: 11px; fill: none; stroke: currentColor; stroke-width: 2.4; }
 
+/* 공고 마감·다시 열기 — 상태 뱃지 바로 옆 (2026-09-15). "다른 공고" 와 달리 무채로
+   둔다: 자주 누르는 것이 아니라 최종 결과를 낸 뒤 한 번 누르는 것이라 눈에 띄되
+   튀지 않게. 되돌릴 수 있는 일이라 확인창 하나면 충분하다 */
+.statusBtn {
+  height: 30px;
+  padding: 0 var(--sp-3);
+  border-radius: var(--r-pill);
+  border: var(--border-w) solid var(--border);
+  background: var(--bg-elev);
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--font-caption);
+  font-weight: 600;
+  cursor: pointer;
+  flex: none;
+  white-space: nowrap;
+  transition: background var(--dur-fast) var(--ease);
+}
+.statusBtn:hover { background: var(--bg-sunken); }
+.statusBtn:disabled { opacity: .6; cursor: default; }
+.statusBtn:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
+
 .jobMenu {
   position: absolute;
   top: calc(100% + 6px);

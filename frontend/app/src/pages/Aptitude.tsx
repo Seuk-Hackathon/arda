@@ -8,7 +8,25 @@ import styles from './Aptitude.module.css'
    토큰이 곧 인증. Interview.tsx 와 같은 껍데기 패턴.
 
    전 문항 필수(서버도 422 로 거른다) — 제출 버튼은 다 고르기 전엔 잠긴다.
-   응답은 선택 사항이고 불이익이 없다는 안내를 화면에도 그대로 쓴다. */
+   응답은 선택 사항이고 불이익이 없다는 안내를 화면에도 그대로 쓴다.
+
+   ## 두 자리에서 열린다 (2026-09-15)
+
+   | 어디 | 토큰 | 껍데기 |
+   |---|---|---|
+   | `/aptitude/:token` — 메일 링크 착지점 | 주소 | 이 파일이 전부 |
+   | `/my/aptitude` — 지원자 셸의 탭 | 셸이 준다 | MyShell 이 감싼다 |
+
+   **화면은 한 벌이다.** 두 벌을 만들면 한쪽만 고치는 날이 온다. 달라지는 것은
+   토큰이 어디서 오는가와, 셸 안에서는 자기 배경·100vh 를 접는가(`nested`)
+   뿐이다. */
+
+interface Props {
+  /* 셸이 열 때 넘겨주는 토큰. 없으면 주소에서 읽는다 (메일 링크) */
+  token?: string
+  /* 셸 안이면 자기 배경과 높이를 접는다 */
+  nested?: boolean
+}
 
 type LoadState =
   | { kind: 'loading' }
@@ -16,8 +34,9 @@ type LoadState =
   | { kind: 'invalid' }
   | { kind: 'error'; message: string }
 
-export default function Aptitude() {
-  const { token } = useParams<{ token: string }>()
+export default function Aptitude({ token: given, nested = false }: Props = {}) {
+  const { token: fromUrl } = useParams<{ token: string }>()
+  const token = given ?? fromUrl
   const [state, setState] = useState<LoadState>({ kind: 'loading' })
   const [values, setValues] = useState<Record<string, number>>({})
   const [pending, setPending] = useState(false)
@@ -53,9 +72,10 @@ export default function Aptitude() {
   }
 
   return (
-    <div className={styles.page}>
+    <div className={`${styles.page} ${nested ? styles.nested : ''}`}>
       <main className={styles.column}>
-        <h1 className={styles.logo}><span className={styles.seed}>A</span>rda</h1>
+        {/* 셸 안에서는 로고를 그리지 않는다 — 상단 바에 이미 한 번 있다 */}
+        {!nested && <h1 className={styles.logo}><span className={styles.seed}>A</span>rda</h1>}
 
         {state.kind === 'loading' && (
           <div className={styles.card} aria-busy="true">

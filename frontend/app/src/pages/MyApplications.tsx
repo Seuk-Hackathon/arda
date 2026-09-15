@@ -1,202 +1,240 @@
-import { useCallback, useEffect, useState } from 'react'
-import { ApiError, getApplicantToken, setApplicantToken } from '../api/client'
-import { applicantAuth } from '../api/endpoints'
-import type { ApplicantMe } from '../api/types'
+import { Link } from 'react-router-dom'
+import type { MyApplication } from '../api/types'
+import {
+  APTITUDE,
+  LEGS,
+  objectParticle,
+  shortDate,
+  tabHref,
+  tasksOf,
+  topTask,
+  whereIs,
+  type LegKey,
+  type Task,
+  useMy,
+  type Where,
+} from './myApplicant'
 import styles from './MyApplications.module.css'
 
-/* 지원자 본인 화면 (ADR-0033) — 이메일 + 생년월일 8자리로 들어온다.
+/* 지원자 셸의 **현황 탭** (`/my`) — 앱의 홈(applicant_summary_screen.dart) 자리.
 
-   **담당자 로그인(`/login`)과 완전히 다른 화면이다.** 같은 자리에 두면 지원자가
-   담당자 계정으로 들어가려다 막히고, 담당자는 반대로 헤맨다. 실제로 그렇게 한 번
-   막혔다 — 그래서 주소도 화면도 나눠 뒀다.
+   ## 2026-09-15 — 셸이 생기면서 반으로 줄었다
 
-   토큰도 자리를 나눈다(`arda-applicant-token`). 한 브라우저에서 담당자로 보다가
-   여기에 들어와도 서로를 덮어쓰지 않는다. */
+   전에는 이 파일이 화면 전체였다: 로그인 판정 · 상단 바 · 계정 메뉴 · 설정
+   덮개 · 왼쪽 지원 목록 · 오른쪽 여정. 사이드바가 생기면서 앞의 넷은
+   [MyShell](./MyShell.tsx) 로, 왼쪽 목록은 사이드바의 「보고 있는 지원」으로
+   갔다. 여기 남은 것은 **급한 일 띠 하나와 펼친 지원의 여정**이다.
 
-type View =
-  | { kind: 'login' }
-  | { kind: 'loading' }
-  | { kind: 'ready'; data: ApplicantMe }
+   판단(어느 세션을 여는가 · 어느 단계에 매다는가 · 남은 날)은
+   [myApplicant.ts](./myApplicant.ts) 에 있다 — 사이드바의 할 일 개수와 이
+   화면의 줄이 같은 답을 해야 해서다.
+
+   **폭은 화면을 쓴다.** 가운데 1040px 섬으로 두면 넓은 모니터에서 양옆이 비어
+   화면 한가운데 몰린 것처럼 보인다. 대신 여정에 상한을 둔다 — 넓어지는 것은
+   여백이지 줄이 아니다. */
 
 export default function MyApplications() {
-  const [view, setView] = useState<View>(
-    getApplicantToken() ? { kind: 'loading' } : { kind: 'login' },
-  )
-  const [email, setEmail] = useState('')
-  const [birth, setBirth] = useState('')
-  const [pending, setPending] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  const load = useCallback(async (signal?: AbortSignal) => {
-    try {
-      setView({ kind: 'ready', data: await applicantAuth.me(signal) })
-    } catch (err) {
-      if (err instanceof DOMException && err.name === 'AbortError') return
-      /* 토큰이 죽었으면 클라이언트가 이미 지웠다. 로그인 화면으로 되돌린다. */
-      setView({ kind: 'login' })
-    }
-  }, [])
-
-  useEffect(() => {
-    if (!getApplicantToken()) return
-    const ac = new AbortController()
-    void load(ac.signal)
-    return () => ac.abort()
-  }, [load])
-
-  async function submit(e: React.FormEvent) {
-    e.preventDefault()
-    setPending(true)
-    setError(null)
-    try {
-      const res = await applicantAuth.login(email.trim(), birth.trim())
-      setApplicantToken(res.access_token)
-      setView({ kind: 'loading' })
-      await load()
-    } catch (err) {
-      /* **사유를 지어내지 않는다.** 서버가 없는 이메일과 틀린 생년월일을 구별해
-         주지 않는 것이 설계다 — 화면에서 "그런 이메일이 없습니다"라고 쓰면
-         서버가 안 하기로 한 일을 화면이 대신 해 버린다. */
-      setError(
-        err instanceof ApiError
-          ? err.message
-          : '잠시 후 다시 시도해 주세요',
-      )
-    } finally {
-      setPending(false)
-    }
-  }
-
-  function logout() {
-    setApplicantToken(null)
-    setEmail('')
-    setBirth('')
-    setView({ kind: 'login' })
-  }
+  const { me, app, preview } = useMy()
+  const top = topTask(me)
 
   return (
-    <div className={styles.page}>
-      <main className={styles.column}>
-        <h1 className={styles.logo}><span className={styles.seed}>A</span>rda</h1>
+    <main className={styles.wide}>
+      {preview && (
+        <p className={styles.previewNote}>
+          표본 데이터입니다 — 서버를 부르지 않았습니다 (<code>?preview</code>)
+        </p>
+      )}
 
-        {view.kind === 'login' && (
-          <form className={styles.card} onSubmit={submit}>
-            <h2 className={styles.cardTitle}>지원 현황 조회</h2>
-            <p className={styles.help}>
-              지원할 때 쓰신 이메일과 생년월일로 확인하실 수 있습니다.
-            </p>
+      {app === null ? (
+        <div className={styles.card}>
+          <p className={styles.emptyBig}>접수된 지원이 없습니다</p>
+          {/* **「그런 이메일이 없습니다」라고 쓰지 않는다** — 서버가 없는 이메일과
+              틀린 생년월일을 구별해 주지 않는 것이 설계다(ADR-0033) */}
+          <p className={styles.help}>지원할 때 쓰신 이메일이 맞는지 확인해 주세요.</p>
+        </div>
+      ) : (
+        <>
+          {/* 지금 할 일 하나. 없으면 조용한 띠로 바뀐다 — **대부분의 날이
+              그렇다.** 빈 자리로 두면 매일 새로고침하게 된다.
 
-            <label className={styles.label} htmlFor="ap-email">이메일</label>
-            <input
-              id="ap-email"
-              className={styles.input}
-              type="email"
-              autoComplete="email"
-              inputMode="email"
-              placeholder="지원할 때 쓰신 이메일"
-              value={email}
-              disabled={pending}
-              onChange={(e) => setEmail(e.target.value)}
-            />
-
-            <label className={styles.label} htmlFor="ap-birth">생년월일</label>
-            <input
-              id="ap-birth"
-              className={styles.input}
-              /* 숫자 8자리다. 폰에서 숫자 자판이 바로 뜨게 inputMode 를 준다 —
-                 type=number 는 앞자리 0 이 사라져서 못 쓴다. */
-              inputMode="numeric"
-              maxLength={8}
-              placeholder="19980412"
-              value={birth}
-              disabled={pending}
-              onChange={(e) => setBirth(e.target.value.replace(/\D/g, ''))}
-            />
-
-            {error && <p className={styles.error} role="alert">{error}</p>}
-
-            <button
-              type="submit"
-              className="btn btn-primary"
-              disabled={pending || !email.trim() || birth.length !== 8}
-            >
-              {pending ? '확인 중…' : '조회하기'}
-            </button>
-
-            {/* 담당자가 잘못 들어왔을 때 나갈 길. 반대로 지원자가 담당자
-                로그인으로 흘러가지 않도록 문구를 분명히 둔다. */}
-            <p className={styles.foot}>
-              채용 담당자이신가요? <a className={styles.link} href="/login">담당자 로그인</a>
-            </p>
-          </form>
-        )}
-
-        {view.kind === 'loading' && (
-          <div className={styles.card} aria-busy="true">
-            <div className={styles.skeleton} style={{ width: '50%' }} />
-            <div className={styles.skeleton} />
-          </div>
-        )}
-
-        {view.kind === 'ready' && (
-          <>
-            <div className={styles.card}>
-              <h2 className={styles.cardTitle}>
-                {view.data.name ? `${view.data.name}님의 지원 현황` : '지원 현황'}
-              </h2>
-              <p className={styles.help}>{view.data.email}</p>
+              **여러 지원을 가로질러 고른다**(topTask). 그래서 띠가 가리키는 것이
+              지금 펼친 지원이 아닐 수 있고, 그때 문은 그쪽 지원으로 데려간다 */}
+          {top !== null && top.task.action !== null ? (
+            <div className={styles.bar}>
+              <span className={styles.barText}>
+                <span className={styles.barKicker}>
+                  {top.task.name === APTITUDE ? '먼저 하실 일' : '지금 하실 일'}
+                </span>
+                <p className={styles.barTitle}>
+                  {top.task.name}{objectParticle(top.task.name)} 해 주세요
+                </p>
+                <p className={styles.barWhere}>{top.app.posting_title || '공고'}</p>
+              </span>
+              {top.task.due !== null && (
+                <span className={`${styles.due} ${top.task.due.near ? styles.dueNear : ''}`}>
+                  {top.task.due.text}
+                </span>
+              )}
+              <Link className={styles.cta} to={tabHref(top.task.tab, top.app.id)}>
+                {top.task.action.text}
+              </Link>
             </div>
+          ) : (
+            <div className={`${styles.bar} ${styles.barCalm}`}>
+              <span className={styles.barText}>
+                <span className={styles.barKicker}>지금은</span>
+                <p className={styles.barTitle}>기다리시면 됩니다</p>
+                <p className={styles.barWhere}>
+                  내신 것은 모두 접수됐습니다. 다음 안내는 <strong>메일로</strong> 드립니다.
+                </p>
+              </span>
+            </div>
+          )}
 
-            {view.data.applications.length === 0 ? (
-              <div className={styles.card}>
-                <p className={styles.help}>접수된 지원이 없습니다.</p>
+          <Journey app={app} />
+        </>
+      )}
+    </main>
+  )
+}
+
+function Journey({ app }: { app: MyApplication }) {
+  const w = whereIs(app.stage_label)
+  const tasks = tasksOf(app)
+
+  return (
+    <div className={styles.detail}>
+      <div className={styles.detailHead}>
+        <h2 className={styles.detailTitle}>{app.posting_title || '공고'}</h2>
+        <span className={styles.gap} />
+        <span
+          className={`${styles.pill} ${
+            w?.ending === 'accepted'
+              ? styles.pillWin
+              : w?.ending === 'rejected'
+                ? styles.pillEnd
+                : ''
+          }`}
+        >
+          {app.stage_label}
+        </span>
+        <span className={styles.when}>{shortDate(app.applied_at)} 지원</span>
+      </div>
+
+      {/* 문구를 못 맞추면 여정을 안 그린다 — 틀린 여정은 없는 것보다 나쁘다.
+          단계 글자는 위 알약에 이미 있으므로 화면이 말을 잃지는 않는다 */}
+      {w === null ? (
+        <div className={styles.journey}>
+          {tasks.map((t) => (
+            <TaskRow key={t.name} task={t} appId={app.id} />
+          ))}
+        </div>
+      ) : (
+        <div className={styles.journey}>
+          {LEGS.map((leg, i) => {
+            const here = i === w.idx
+            const past = i < w.idx
+            const mine = tasks.filter((t) => t.leg === leg.key)
+            const tone = here
+              ? w.ending === 'accepted'
+                ? styles.legWin
+                : w.ending === 'rejected'
+                  ? styles.legStop
+                  : styles.legHere
+              : past
+                ? styles.legPast
+                : ''
+
+            return (
+              <div key={leg.key} className={`${styles.leg} ${tone}`}>
+                <span className={styles.legRail} aria-hidden="true">
+                  <span className={styles.node}>
+                    {past || (here && w.ending !== 'none') ? '✓' : ''}
+                  </span>
+                  {i < LEGS.length - 1 && <span className={styles.wire} />}
+                </span>
+                <span className={styles.legBody}>
+                  <span className={styles.legRow}>
+                    <span className={styles.legName}>{legName(leg, here, w)}</span>
+                    <span className={styles.legNote}>
+                      {legNote(leg.key, i, here, w, mine.filter((t) => t.tone === 'todo').length, app)}
+                    </span>
+                  </span>
+                  {mine.map((t) => (
+                    <TaskRow key={t.name} task={t} appId={app.id} />
+                  ))}
+                </span>
               </div>
-            ) : (
-              view.data.applications.map((a) => (
-                <div key={a.id} className={styles.card}>
-                  <p className={styles.posting}>{a.posting_title || '공고'}</p>
-                  <p className={styles.stage}>{a.stage_label}</p>
-                  <p className={styles.applied}>
-                    {new Date(a.applied_at).toLocaleDateString('ko-KR')} 지원
-                  </p>
-
-                  {/* 면접이 있으면 **여기서 바로 들어간다.** 이게 없으면 지원자가
-                      메일함을 뒤져 링크를 찾는 수밖에 없다 — 로그인해 놓고도
-                      들어갈 길이 없는 것이 이 화면의 원래 구멍이었다.
-
-                      **AI 면접이 기본이다** — 아르가 묻고, 말하면 버튼 없이
-                      다음 질문으로 넘어간다. 실시간 면접(사람 면접관과 얼굴을
-                      맞대는 것)은 아직 시연 범위 밖이라 아래에 작게 둔다. */}
-                  {/* **끝난 면접도 내려온다** (2026-09-09 · 02-api.md). 없으면
-                      면접을 마친 지원자의 화면에서 면접이 통째로 사라져
-                      "완료"와 "아직 안 잡힘"이 같아진다. 대신 끝난 것에는
-                      들어가는 문을 그리지 않는다 — 눌러도 막히는 버튼이 된다. */}
-                  {a.interviews.map((iv) =>
-                    iv.status === 'done' ? (
-                      <p key={iv.token} className={styles.doneLine}>
-                        AI 면접을 완료했습니다.
-                      </p>
-                    ) : (
-                      <div key={iv.token} className={styles.interview}>
-                        <a className="btn btn-primary" href={`/interview-ai/${iv.token}`}>
-                          AI 면접 참여
-                        </a>
-                        <a className={styles.link} href={`/interview-live/${iv.token}`}>
-                          면접관과 화상으로 참여
-                        </a>
-                      </div>
-                    ),
-                  )}
-                </div>
-              ))
-            )}
-
-            <button type="button" className={styles.link} onClick={logout}>
-              로그아웃
-            </button>
-          </>
-        )}
-      </main>
+            )
+          })}
+        </div>
+      )}
     </div>
+  )
+}
+
+function legName(leg: { key: LegKey; name: string }, here: boolean, w: Where): string {
+  if (leg.key !== 'result' || !here) return leg.name
+  if (w.ending === 'accepted') return '최종 합격'
+  if (w.ending === 'rejected') return '전형 종료'
+  return leg.name
+}
+
+function legNote(
+  key: LegKey,
+  i: number,
+  here: boolean,
+  w: Where,
+  todo: number,
+  app: MyApplication,
+): string {
+  if (key === 'applied') return shortDate(app.applied_at)
+  if (key === 'result') {
+    if (w.ending === 'accepted') return '담당자가 따로 연락드립니다'
+    if (w.ending === 'rejected') return '이 공고의 전형이 끝났습니다'
+    return '면접이 끝나면 메일로 알려 드립니다'
+  }
+  if (here) return todo > 0 ? `지금 여기 · 하실 일 ${todo}개` : '지금 여기'
+  if (i < w.idx) return '통과'
+  /* 아직 안 온 단계. **이름만 두지 않고 어떻게 오는지 적는다** — 안 적으면
+     매일 이 화면을 새로고침하게 된다 */
+  return key === 'interview' ? '서류를 통과하면 안내드립니다' : ''
+}
+
+function TaskRow({ task, appId }: { task: Task; appId: number }) {
+  const stateTone =
+    task.tone === 'todo' ? styles.stateTodo : task.tone === 'done' ? styles.stateDone : ''
+
+  const body = (
+    <>
+      <span className={styles.taskName}>{task.name}</span>
+      <span className={`${styles.taskState} ${stateTone}`}>{task.state}</span>
+      <span className={`${styles.taskDue} ${task.due?.near ? styles.dueNear : ''}`}>
+        {task.due?.text ?? ''}
+      </span>
+      {task.action !== null ? (
+        <span className={`${styles.go} ${task.action.strong ? styles.goStrong : ''}`}>
+          {task.action.text}
+        </span>
+      ) : (
+        <span className={styles.tick}>{task.tone === 'done' ? '✓' : '—'}</span>
+      )}
+    </>
+  )
+
+  /* 갈 곳이 있으면 **줄 전체가 문**이다 — 안쪽 것은 버튼처럼 보이는 표시일
+     뿐이라 링크 안에 링크가 생기지 않는다.
+
+     문은 **탭**을 가리킨다(`/my/aptitude`) — 토큰 주소로 보내면 사이드바가
+     사라져 돌아올 길이 뒤로 가기뿐이 된다 */
+  return task.action !== null ? (
+    <Link
+      className={`${styles.task} ${task.tone === 'todo' ? styles.taskLive : ''}`}
+      to={tabHref(task.tab, appId)}
+    >
+      {body}
+    </Link>
+  ) : (
+    <div className={styles.task}>{body}</div>
   )
 }

@@ -242,7 +242,7 @@ applied(접수), screening(서류심사), interview(면접), accepted(합격), r
 ### AI 면접 (ADR-0029·0032)
 
 - **표정 판단**: 지원자 웹캠 프레임을 ViT (FER2013 파인튜닝) 로 감정 7 분류.
-- **음성 받아쓰기·판단**: Whisper large-v3-turbo + faster-whisper 로 답변을 받아쓴다. 별도 lie-detection 서비스가 침묵·머뭇거림·음성 지표를 본다.
+- **음성 받아쓰기·판단**: Whisper 로 답변을 받아쓴다(운영은 OpenAI 전사 API, GPU·오프라인은 faster-whisper large-v3-turbo — ADR-0038). 별도 lie-detection 서비스가 침묵·머뭇거림·음성 지표를 본다.
 - **합격 판단은 사람 몫**. 아르는 판단 데이터를 정리해 담당자에게 넘긴다.
 
 ### 지원자 앱 로그인 (ADR-0033)

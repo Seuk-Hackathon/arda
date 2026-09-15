@@ -12,6 +12,17 @@
 /// 연봉·평가·다른 지원자는 서버 프롬프트가 답하지 않는다.
 ///
 /// 담당자와 직접 주고받는 채팅은 서버에 없다 — 만들려면 백엔드부터다.
+///
+/// ## 2026-09-15 개편
+///
+/// - 확정된 시간을 **24px 로** 크게. 그 전에는 다른 글자와 같은 크기라
+///   이 화면에서 제일 중요한 값이 안 읽혔다
+/// - 묻는 칸을 **화면 아래에 고정**한다. 그 전에는 목록 맨 끝에 있어서
+///   답이 쌓일수록 내려가 찾아야 했다
+/// - **제안 칩**을 둔다. 빈 칸만 있으면 무엇을 물어도 되는지 모른다 —
+///   답할 수 있는 범위를 보여 주는 역할도 한다
+/// - 답 아래 **"이 답은 저장되지 않아요"** 를 적는다. 위에 적은 대로 서버가
+///   앞 질문을 기억하지 않는데, 말풍선만 쌓아 두면 이어지는 대화로 읽힌다
 library;
 
 import 'package:flutter/material.dart';
@@ -130,7 +141,10 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
           : _Failed(message: _error!, onRetry: _load);
     }
 
-    return ListView(
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Expanded(child: ListView(
       padding: const EdgeInsets.all(AppSpace.s4),
       children: [
         Text(
@@ -165,92 +179,236 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
         const Divider(color: AppColors.borderSoft, height: 1),
         const SizedBox(height: AppSpace.s4),
 
-        const Text(
-          '아르에게 묻기',
-          style: TextStyle(
-            fontFamily: AppType.fontFamily,
-            fontSize: AppType.body,
-            fontWeight: AppType.wSemiBold,
-            color: AppColors.text,
-          ),
-        ),
-        const SizedBox(height: AppSpace.s2),
-        const Text(
-          '공고에 대해 궁금한 것을 물어보세요. 한 번에 하나씩 답합니다.',
-          style: TextStyle(
-            fontFamily: AppType.fontFamily,
-            fontSize: AppType.caption,
-            color: AppColors.textSub,
-          ),
-        ),
+        const _AskHead(),
         const SizedBox(height: AppSpace.s3),
 
         for (final turn in _asked) ...[
           _Bubble(text: turn.question, mine: true),
           const SizedBox(height: AppSpace.s2),
-          _Bubble(text: turn.answer ?? '답변을 만들고 있습니다…', mine: false),
+          _Bubble(
+            text: turn.answer ?? '답변을 만들고 있어요…',
+            mine: false,
+            // **대화가 아니라는 것**을 답 아래에 적는다 — 서버가 앞 질문을
+            // 기억하지 않는데 말풍선만 쌓으면 이어지는 대화로 읽힌다
+            footer: turn.answer == null ? null : '이 답은 저장되지 않아요',
+          ),
           const SizedBox(height: AppSpace.s3),
         ],
 
-        TextField(
-          controller: _question,
-          enabled: !_asking,
-          minLines: 1,
-          maxLines: 3,
-          onSubmitted: (_) => _ask(),
-          style: const TextStyle(
-            fontFamily: AppType.fontFamily,
-            fontSize: AppType.sm,
-            color: AppColors.text,
+        // 무엇을 물어도 되는지 보여 준다. 이미 물은 것은 빼서 다시 안 뜬다
+        if (!_asking)
+          _Chips(
+            asked: _asked.map((t) => t.question).toSet(),
+            onPick: (q) {
+              _question.text = q;
+              _ask();
+            },
           ),
-          decoration: const InputDecoration(
-            isDense: true,
-            filled: true,
-            fillColor: AppColors.bgSunken,
-            hintText: '예: 면접은 어떻게 진행되나요?',
-            hintStyle: TextStyle(
-              fontFamily: AppType.fontFamily,
-              fontSize: AppType.sm,
-              color: AppColors.textSub,
-            ),
-            contentPadding: EdgeInsets.symmetric(
-              horizontal: AppSpace.s3,
-              vertical: AppSpace.s3,
-            ),
-            border: OutlineInputBorder(
-              borderRadius: AppShape.ctl,
-              borderSide: BorderSide(
-                color: AppColors.border,
-                width: AppShape.borderW,
-              ),
-            ),
-            enabledBorder: OutlineInputBorder(
-              borderRadius: AppShape.ctl,
-              borderSide: BorderSide(
-                color: AppColors.border,
-                width: AppShape.borderW,
-              ),
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: AppShape.ctl,
-              borderSide: BorderSide(
-                color: AppColors.accent,
-                width: AppShape.borderW,
-              ),
+
+      ],
+        )),
+
+        // **화면 아래에 고정.** 목록 끝에 두면 답이 쌓일수록 내려가 찾아야 한다
+        _Compose(
+          controller: _question,
+          busy: _asking,
+          onSend: _ask,
+        ),
+      ],
+    );
+  }
+}
+
+/// 아르 머리. 인사말 풍선이 매번 화면을 먹지 않게 한 줄로 줄였다
+class _AskHead extends StatelessWidget {
+  const _AskHead();
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Container(
+          width: 26,
+          height: 26,
+          decoration: const BoxDecoration(
+            shape: BoxShape.circle,
+            gradient: RadialGradient(
+              center: Alignment(-0.3, -0.4),
+              colors: [Color(0xFFBAE6FD), AppColors.accent, Color(0xFF0E7490)],
+              stops: [0, 0.52, 1],
             ),
           ),
         ),
-        const SizedBox(height: AppSpace.s3),
-        SizedBox(
-          height: AppLayout.minTouchTarget,
-          child: OutlinedButton(
-            onPressed: _asking ? null : _ask,
-            child: Text(_asking ? '묻는 중…' : '물어보기'),
+        const SizedBox(width: AppSpace.s2),
+        const Expanded(
+          child: Text(
+            '아르에게 묻기',
+            style: TextStyle(
+              fontFamily: AppType.fontFamily,
+              fontSize: AppType.caption,
+              fontWeight: AppType.wSemiBold,
+              color: AppColors.text,
+            ),
+          ),
+        ),
+        // 답할 수 있는 범위를 적는다 — 연봉·평가는 서버 프롬프트가 막는다
+        const Text(
+          '공고에 대한 것만',
+          style: TextStyle(
+            fontFamily: AppType.fontFamily,
+            fontSize: 10,
+            color: AppColors.textSub,
           ),
         ),
       ],
     );
   }
+}
+
+/// 제안 칩. 빈 칸만 있으면 무엇을 물어도 되는지 모른다
+class _Chips extends StatelessWidget {
+  const _Chips({required this.asked, required this.onPick});
+
+  final Set<String> asked;
+  final ValueChanged<String> onPick;
+
+  static const _all = [
+    '면접은 어떻게 진행되나요?',
+    '준비물이 있나요?',
+    '근무지가 어디인가요?',
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final left = _all.where((q) => !asked.contains(q)).toList();
+    if (left.isEmpty) return const SizedBox.shrink();
+
+    return Wrap(
+      spacing: AppSpace.s2,
+      runSpacing: AppSpace.s2,
+      children: [
+        for (final q in left)
+          Material(
+            color: AppColors.bgSunken,
+            borderRadius: const BorderRadius.all(AppShape.rPill),
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
+              onTap: () => onPick(q),
+              child: Container(
+                height: 30,
+                padding: const EdgeInsets.symmetric(horizontal: AppSpace.s3),
+                alignment: Alignment.center,
+                child: Text(
+                  q,
+                  style: const TextStyle(
+                    fontFamily: AppType.fontFamily,
+                    fontSize: 11,
+                    color: AppColors.text,
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+/// 아래 고정 입력 줄
+class _Compose extends StatelessWidget {
+  const _Compose({
+    required this.controller,
+    required this.busy,
+    required this.onSend,
+  });
+
+  final TextEditingController controller;
+  final bool busy;
+  final VoidCallback onSend;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(
+        AppSpace.s4,
+        AppSpace.s2,
+        AppSpace.s4,
+        AppSpace.s3,
+      ),
+      decoration: const BoxDecoration(
+        color: AppColors.bgChrome,
+        border: Border(
+          top: BorderSide(color: AppColors.borderSoft, width: AppShape.borderW),
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Expanded(
+            child: TextField(
+              controller: controller,
+              enabled: !busy,
+              minLines: 1,
+              maxLines: 3,
+              textInputAction: TextInputAction.send,
+              onSubmitted: (_) => onSend(),
+              style: const TextStyle(
+                fontFamily: AppType.fontFamily,
+                fontSize: AppType.sm,
+                color: AppColors.text,
+              ),
+              decoration: InputDecoration(
+                isDense: true,
+                filled: true,
+                fillColor: Colors.white.withValues(alpha: 0.05),
+                hintText: busy ? '답을 만들고 있어요…' : '궁금한 점을 물어보세요',
+                hintStyle: const TextStyle(
+                  fontFamily: AppType.fontFamily,
+                  fontSize: AppType.sm,
+                  color: AppColors.textSub,
+                ),
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: AppSpace.s4,
+                  vertical: AppSpace.s3,
+                ),
+                border: _border(AppColors.border),
+                enabledBorder: _border(AppColors.border),
+                focusedBorder: _border(AppColors.accent),
+                disabledBorder: _border(AppColors.borderSoft),
+              ),
+            ),
+          ),
+          const SizedBox(width: AppSpace.s2),
+          Material(
+            color: busy
+                ? Colors.white.withValues(alpha: 0.12)
+                : AppColors.accentFill,
+            borderRadius: const BorderRadius.all(Radius.circular(14)),
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
+              onTap: busy ? null : onSend,
+              child: SizedBox(
+                width: AppLayout.minTouchTarget,
+                height: AppLayout.minTouchTarget,
+                child: Icon(
+                  Icons.arrow_upward,
+                  size: 18,
+                  color: busy
+                      ? AppColors.text.withValues(alpha: 0.4)
+                      : AppColors.onAccent,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  OutlineInputBorder _border(Color c) => OutlineInputBorder(
+    borderRadius: const BorderRadius.all(Radius.circular(14)),
+    borderSide: BorderSide(color: c, width: AppShape.borderW),
+  );
 }
 
 class _Slots extends StatelessWidget {
@@ -349,6 +507,7 @@ class _SlotText extends StatelessWidget {
   }
 }
 
+/// 확정된 시간. **24px 로 크게** — 이 화면에서 제일 중요한 값이다
 class _Confirmed extends StatelessWidget {
   const _Confirmed({required this.slot});
 
@@ -356,28 +515,55 @@ class _Confirmed extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final at = slot?.startAt;
     return Container(
-      padding: const EdgeInsets.all(AppSpace.s4),
+      padding: const EdgeInsets.all(AppSpace.s5),
       decoration: BoxDecoration(
-        color: AppColors.okSoft,
-        borderRadius: AppShape.card,
-        border: Border.all(color: AppColors.ok, width: AppShape.borderW),
+        borderRadius: const BorderRadius.all(Radius.circular(20)),
+        border: Border.all(color: AppColors.ok.withValues(alpha: 0.32)),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            AppColors.ok.withValues(alpha: 0.16),
+            AppColors.ok.withValues(alpha: 0.05),
+          ],
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Text(
-            '면접 시간이 확정됐습니다',
+            '확정됐어요',
             style: TextStyle(
               fontFamily: AppType.fontFamily,
-              fontSize: AppType.sm,
+              fontSize: 11,
               fontWeight: AppType.wSemiBold,
+              letterSpacing: 1.1,
               color: AppColors.okText,
             ),
           ),
-          if (slot != null) ...[
+          if (at != null) ...[
             const SizedBox(height: AppSpace.s3),
-            _SlotText(slot: slot!),
+            Text(
+              '${at.month}월 ${at.day}일 (${_weekday(at)})',
+              style: const TextStyle(
+                fontFamily: AppType.fontFamily,
+                fontSize: 24,
+                fontWeight: FontWeight.w800,
+                letterSpacing: -0.5,
+                color: AppColors.text,
+              ),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              '${formatTime(at)} ~ ${formatTime(slot!.endAt)}',
+              style: TextStyle(
+                fontFamily: AppType.fontFamily,
+                fontSize: 15,
+                color: AppColors.text.withValues(alpha: 0.8),
+              ),
+            ),
           ],
         ],
       ),
@@ -385,8 +571,15 @@ class _Confirmed extends StatelessWidget {
   }
 }
 
+const _weekdays = ['월', '화', '수', '목', '금', '토', '일'];
+
+String _weekday(DateTime d) => _weekdays[d.weekday - 1];
+
 class _Bubble extends StatelessWidget {
-  const _Bubble({required this.text, required this.mine});
+  const _Bubble({required this.text, required this.mine, this.footer});
+
+  /// 답 아래 한 줄. **대화가 아니라는 것**을 화면이 먼저 말한다
+  final String? footer;
 
   final String text;
 
@@ -412,14 +605,33 @@ class _Bubble extends StatelessWidget {
               width: AppShape.borderW,
             ),
           ),
-          child: Text(
-            text,
-            style: TextStyle(
-              fontFamily: AppType.fontFamily,
-              fontSize: AppType.sm,
-              height: 1.6,
-              color: mine ? AppColors.accentText : AppColors.text,
-            ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                text,
+                style: TextStyle(
+                  fontFamily: AppType.fontFamily,
+                  fontSize: AppType.sm,
+                  height: 1.6,
+                  color: mine ? AppColors.accentText : AppColors.text,
+                ),
+              ),
+              if (footer != null) ...[
+                const SizedBox(height: AppSpace.s2),
+                const Divider(height: 1, color: AppColors.borderSoft),
+                const SizedBox(height: AppSpace.s2),
+                Text(
+                  footer!,
+                  style: const TextStyle(
+                    fontFamily: AppType.fontFamily,
+                    fontSize: 10,
+                    color: AppColors.textSub,
+                  ),
+                ),
+              ],
+            ],
           ),
         ),
       ),

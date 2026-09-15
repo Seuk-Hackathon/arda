@@ -27,7 +27,32 @@ git merge --ff-only origin/main >> "$LOG" 2>&1
 # 결과: compose 변경(#103 env_file/mem_limit 등)이 배포에 반영되지 않았다.
 # 서버의 옛 사본 삭제와 함께 이 경로를 명시적으로 고정한다.
 # 빌드를 up 과 분리 — 빌드가 깨져도 돌던 컨테이너는 안 죽는다 (팀 07-deploy 교훈)
-docker compose -p arda -f infra/docker-compose.prod.yml build >> "$LOG" 2>&1
+#
+# 2026-09-14: **선택적 빌드**. 옛 스크립트는 매 배포마다 `api·lie-detection` 둘 다
+# 재빌드 → 프론트만 바꿔도 10분씩 걸리고 lie-detection 이 torch 200MB 재다운로드.
+# 이제 `$LOCAL..$REMOTE` diff 로 어느 서비스가 실제로 바뀌었는지 판정한다.
+#
+# 규칙:
+#   backend/ 또는 infra/docker-compose.prod.yml 바뀜  → api 재빌드
+#   ai/lie-detection/ 바뀜                            → lie-detection 재빌드
+#   그 외만 바뀜 (docs · frontend · ai/qwen-training) → 재빌드 없음 (up -d 로 재구성만)
+# compose 파일이 바뀌면 두 서비스 다 안 바뀌더라도 up -d 로 반영은 해야 하므로,
+# 이후의 `up -d` 는 조건 없이 실행한다 (이 아래 그대로).
+CHANGED=$(git diff --name-only "$LOCAL" "$REMOTE" 2>>"$LOG" || true)
+BUILD_TARGETS=""
+if echo "$CHANGED" | grep -qE "^(backend/|infra/docker-compose\.prod\.yml)"; then
+  BUILD_TARGETS="api"
+fi
+if echo "$CHANGED" | grep -qE "^ai/lie-detection/"; then
+  BUILD_TARGETS="$BUILD_TARGETS lie-detection"
+fi
+BUILD_TARGETS=$(echo "$BUILD_TARGETS" | xargs)  # 앞뒤 공백 정리
+if [ -n "$BUILD_TARGETS" ]; then
+  echo "$(date -Is) build 대상: $BUILD_TARGETS" >> "$LOG"
+  docker compose -p arda -f infra/docker-compose.prod.yml build $BUILD_TARGETS >> "$LOG" 2>&1
+else
+  echo "$(date -Is) build 스킵 (백엔드·lie-detection 변경 없음)" >> "$LOG"
+fi
 # 스키마 이행 (기동 전에) — 컬럼 추가/변경은 create_all 이 못 함. #17
 echo "$(date -Is) alembic upgrade..." >> "$LOG"
 docker compose -p arda -f infra/docker-compose.prod.yml run --rm api /app/.venv/bin/alembic upgrade head >> "$LOG" 2>&1

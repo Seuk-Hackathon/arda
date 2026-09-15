@@ -1,0 +1,948 @@
+/* 지원자 웹 셸 — 상단 바 + 왼쪽 사이드바 (2026-09-15).
+
+   **앱과 같은 탭을 웹에도 놓는다.** 앱(mobile/lib/screens/applicant_shell.dart)
+   은 하단 탭 다섯으로 도는데 웹에는 탭이 없어서, 인적성을 보러 가면 돌아올
+   길이 브라우저 뒤로 가기뿐이었다. 같은 사람이 같은 제품을 두 모양으로 쓴다.
+
+   탭은 **전형 네 자리**다 — 현황 · 인적성 검사 · 면접 시간 · AI 면접.
+   「내 정보」는 여기 없다: 사이드바는 전형을 밟는 자리고 내 정보는 성격이
+   다르다. 담당자 화면도 설정을 내비에서 빼 계정 메뉴로 옮겼다(2026-09-05,
+   Sidebar.module.css 의 같은 주석). 같은 규칙을 지원자 화면에도 쓴다.
+
+   상단 바·계정 메뉴·덮개는 MyApplications.module.css 에서 그대로 옮겼다 —
+   그 화면이 셸이던 시절의 것이고, 생김새는 바뀌지 않았다. 토큰은 전부
+   tokens.css. */
+
+
+/* **담당자 화면(Layout.shell)과 같은 셸이다.** 전에는 평평한 --bg 하나였고,
+   그러면 이 화면만 다른 제품처럼 보인다 — 나머지 화면은 전부 오로라 위에
+   유리가 떠 있는 한 장이다. 같은 오로라 넷 + 같은 그레인을 쓴다. */
+.page {
+  position: relative;
+  /* **높이를 쥔다** (담당자 Layout.shell 과 같은 방식). 문서가 흐르게 두면
+     본문 자리의 높이가 안 정해지고, 그러면 그 안에서 열리는 일정 채팅이
+     자기 높이를 100dvh 로 잡을 수밖에 없다 — 사이드바가 가로로 눕는 폭
+     (1100px 아래)에서 그만큼 아래로 밀려 입력줄이 화면 밖으로 나갔다 */
+  height: 100vh;
+  overflow: clip;
+  display: flex;
+  flex-direction: column;
+  background:
+    radial-gradient(46% 44% at 15% 20%, rgba(59, 130, 246, .32) 0%, rgba(7, 11, 20, 0) 68%),
+    radial-gradient(42% 40% at 84% 10%, rgba(139, 92, 246, .28) 0%, rgba(7, 11, 20, 0) 70%),
+    radial-gradient(52% 50% at 74% 90%, rgba(16, 185, 129, .22) 0%, rgba(7, 11, 20, 0) 72%),
+    radial-gradient(40% 40% at 28% 94%, rgba(34, 211, 238, .18) 0%, rgba(7, 11, 20, 0) 70%),
+    var(--bg);
+}
+
+/* 그레인 — 넓은 어두운 면에 오로라가 만드는 밴딩을 깨고 재질감을 준다.
+   Layout.shell::after 와 같은 값이다. 드롭다운보다 아래(--z-sticky)라
+   계정 메뉴 위에는 끼지 않는다. */
+.page::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: var(--z-sticky);
+  pointer-events: none;
+  opacity: .05;
+  mix-blend-mode: overlay;
+  background-image: var(--grain);
+  background-size: 160px 160px;
+}
+
+/* ── 상단 바 ──────────────────────────────────────
+
+   이름·이메일·로그아웃을 한 자리로 모은다. 전에는 이름·이메일이 카드 하나를
+   통째로 쓰고 로그아웃은 **페이지 맨 아래 글자 링크**였다 — 지원이 여럿이면
+   화면을 다 내려야 나갈 수 있었다. */
+.topbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  height: 64px;
+  /* 본문과 같은 들여쓰기 — 담당자 화면의 제목 띠와 같은 규칙이다.
+     안 맞추면 로고와 아래 내용이 서로 다른 세로선에서 시작한다 */
+  padding: 0 var(--content-x);
+  /* 사이드바·제목 띠와 같은 유리. 이 화면에는 사이드바가 없지만 크롬은
+     한 벌이라 재질이 갈리면 안 된다(PageHead.module.css 의 같은 주석) */
+  background: var(--bg-chrome);
+  backdrop-filter: var(--glass);
+  border-bottom: var(--border-w) solid var(--sidebar-line);
+  /* backdrop-filter 가 이 띠를 쌓임 맥락으로 만든다 — z-index 를 안 주면
+     본문이 위에 그려지고 계정 메뉴가 카드 뒤로 깔린다(2026-09-07 과 같은 사고) */
+  position: relative;
+  z-index: var(--z-sticky);
+}
+
+.gap {
+  flex: 1;
+}
+
+/* 로고. **글자에 색을 쓰지 않는다** — 색은 마크가 내고 글자는 흰색이다
+   (로그인 화면과 같은 규격) */
+.logo {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin: 0;
+  font-size: var(--font-h2);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: #fff;
+  text-shadow: var(--ts-heading);
+  white-space: nowrap;
+}
+
+/* 마크는 빛이라 발광까지가 그림이다 */
+.logoMark {
+  flex: none;
+  display: block;
+  filter: drop-shadow(0 0 12px rgba(96, 165, 250, .55));
+}
+
+/* 로고 뒤에 화면 이름. **담당자 화면에는 왼쪽 메뉴가 있어 지금 어디인지 알 수
+   있는데 지원자 화면에는 메뉴가 없다** — 이 띠가 유일한 단서다 */
+.divider {
+  width: 1px;
+  height: 18px;
+  background: var(--border);
+  flex: none;
+}
+
+.where {
+  font-size: var(--font-sm);
+  font-weight: 500;
+  color: var(--text-sub);
+  white-space: nowrap;
+}
+
+/* ── 계정 ────────────────────────────────────────
+
+   담당자 쪽 AccountMenu 와 같은 규격이다. **평소에는 테두리도 바탕도 없다** —
+   늘 보이는 자리라 버튼처럼 서 있으면 띠에서 계정이 제일 센 요소가 된다
+   (AccountMenu.module.css 의 같은 주석). */
+.account {
+  position: relative;
+  flex: none;
+}
+
+.trigger {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  height: 36px;
+  padding: 0 var(--sp-2) 0 3px;
+  border-radius: var(--r-pill);
+  border: var(--border-w) solid transparent;
+  background: transparent;
+  font-family: var(--sans);
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease);
+}
+
+.trigger:hover {
+  background: var(--bg-sunken);
+}
+
+/* 열려 있는 동안만 눌린 채로 남는다 — 메뉴가 어디서 나왔는지 보여야 한다 */
+.triggerOn {
+  background: var(--bg-sunken);
+  border-color: var(--border-soft);
+}
+
+.trigger:focus-visible {
+  outline: 2px solid var(--accent-text);
+  outline-offset: 2px;
+}
+
+.avatar {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  border: var(--border-w) solid rgba(34, 211, 238, .28);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--font-sm);
+  font-weight: 700;
+  color: var(--accent-text);
+}
+
+.tname {
+  font-size: var(--font-sm);
+  color: var(--text);
+}
+
+.caret {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  stroke: var(--text-sub);
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  /* 메일 주소가 들어갈 만큼만 */
+  min-width: 208px;
+  max-width: 280px;
+  z-index: var(--z-dropdown);
+  display: flex;
+  flex-direction: column;
+  padding: var(--sp-2);
+  border: var(--border-w) solid var(--border);
+  border-radius: 10px;
+  background: #10182A;
+  box-shadow: var(--sh-overlay);
+}
+
+.mWho {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-2) var(--sp-3);
+}
+
+.mWho .avatar {
+  width: 32px;
+  height: 32px;
+  font-size: var(--font-body);
+}
+
+.mText {
+  min-width: 0;
+}
+
+.mName {
+  display: block;
+  font-size: var(--font-sm);
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* 이메일은 여기서 한 번만 보이면 된다 — 늘 띠에 걸어 둘 값이 아니다 */
+.mMail {
+  display: block;
+  font-size: var(--font-cap);
+  color: var(--text-sub);
+  font-family: var(--mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sep {
+  height: 1px;
+  background: var(--border-soft);
+  margin: 0 calc(var(--sp-2) * -1) var(--sp-2);
+}
+
+.mItem {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  width: 100%;
+  height: 36px;
+  padding: 0 var(--sp-2);
+  border: none;
+  border-radius: var(--r-ctl);
+  background: none;
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: var(--font-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.mItem:hover {
+  background: var(--bg-sunken);
+}
+
+.mItem svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  stroke: var(--text-sub);
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+
+/* ── 사이드바 ──────────────────────────────────────
+
+   **담당자 사이드바(Sidebar.module.css)와 같은 규격이다** — 같은 폭
+   (--sidebar-w), 같은 유리(--sidebar-bg + --glass), 같은 항목 높이 48px,
+   같은 활성 표시(시안 워시 + 왼쪽 심지 + 발광). 05-design §3: 동종 요소는
+   같은 규격. 지원자라고 다른 내비를 쓸 이유가 없다.
+
+   접는 손잡이는 두지 않는다 — 담당자는 여섯 화면을 오가며 하루를 보내지만
+   지원자는 네 칸을 가끔 본다. 접을 이유가 생기지 않는다. */
+.body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.side {
+  /* **「보고 있는 지원」 목록이 본문 위로 떨어져야 한다.** 사이드바가 눕는
+     폭(1100px 아래)에서는 그 목록이 본문 자리를 덮는다. 지금은 backdrop-filter
+     가 만든 쌓임 맥락 덕에 우연히 맞지만, 우연에 기대지 않는다 — 담당자
+     사이드바도 같은 줄을 갖고 있고, 없앴다가 손잡이가 반쪽만 보인 적이 있다
+     (Sidebar.module.css, 2026-09-07) */
+  position: relative;
+  z-index: var(--z-dropdown);
+  width: var(--sidebar-w);
+  flex: none;
+  background: var(--sidebar-bg);
+  backdrop-filter: var(--glass);
+  border-right: var(--border-w) solid var(--sidebar-line);
+}
+
+/* 셸이 높이를 쥐므로 사이드바는 늘 화면 높이다 — 따라 붙일 것이 없다.
+   overflow 는 주지 않는다 — 주는 순간 「보고 있는 지원」 목록이 잘린다 */
+.sideStick {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-4) var(--sp-3) var(--sp-5);
+}
+
+/* ── 보고 있는 지원 ────────────────────────────────
+
+   **지원이 둘 이상일 때만 뜬다.** 하나뿐인 사람에게 고를 것이 하나인 목록을
+   보여 줄 이유가 없다 — 대부분이 그렇다.
+
+   앱은 가장 최근 지원 하나만 본다(`me.primary`). 웹은 폭이 있으니 고를 수
+   있게 한다 — 앱의 한계를 그대로 옮기지 않는다. */
+.picker {
+  position: relative;
+  flex: none;
+}
+
+.pickLabel {
+  margin: 0 0 var(--sp-1);
+  padding: 0 var(--sp-1);
+  font-size: var(--font-cap);
+  font-weight: 600;
+  letter-spacing: .04em;
+  color: var(--text-sub);
+}
+
+.pickBox {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  width: 100%;
+  min-height: 44px;
+  padding: var(--sp-2) var(--sp-2) var(--sp-2) var(--sp-3);
+  border: var(--border-w) solid var(--border);
+  border-radius: var(--r-ctl);
+  background: var(--bg-sunken);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: var(--font-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.pickBox:hover {
+  background: var(--sunken-hover);
+}
+
+.pickBox:focus-visible {
+  outline: 2px solid var(--accent-text);
+  outline-offset: 2px;
+}
+
+/* 공고 이름은 길다 — 두 줄까지 쓰고 자른다. 한 줄로 자르면 비슷한 공고 둘이
+   같은 글자로 끝나 구별이 안 된다 */
+.pickName {
+  flex: 1;
+  min-width: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.pickList {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: var(--z-dropdown);
+  max-height: 340px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  padding: var(--sp-2);
+  border: var(--border-w) solid var(--border);
+  border-radius: 10px;
+  background: #10182A;
+  box-shadow: var(--sh-overlay);
+}
+
+.pickGroup {
+  margin: var(--sp-2) 0 var(--sp-1);
+  padding: 0 var(--sp-2);
+  font-size: var(--font-cap);
+  font-weight: 600;
+  color: var(--text-sub);
+}
+
+.pickGroup:first-child {
+  margin-top: 0;
+}
+
+.pickItem {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  width: 100%;
+  padding: var(--sp-2);
+  border: none;
+  border-radius: var(--r-ctl);
+  background: none;
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: var(--font-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.pickItem:hover {
+  background: var(--bg-sunken);
+}
+
+.pickItemOn {
+  background: var(--accent-soft);
+}
+
+.pickText {
+  flex: 1;
+  min-width: 0;
+}
+
+.pickTitle {
+  display: block;
+  font-weight: 600;
+  word-break: keep-all;
+  line-height: 1.35;
+}
+
+/* 이 줄 하나가 "내가 낸 것"과 "떠 있는 공고"를 가른다 */
+.pickWhen {
+  display: block;
+  margin-top: 2px;
+  font-size: var(--font-cap);
+  color: var(--text-sub);
+}
+
+/* ── 내비 ────────────────────────────────────────── */
+.nav {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+
+/* 항목 높이 48px — 05-design §2 가 내비 항목 높이로 못박은 값이고
+   §9 의 터치 타깃 44px 도 넘는다 */
+.navItem {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  min-height: 48px;
+  padding: 0 var(--sp-3);
+  border-radius: var(--r-ctl);
+  font-size: var(--font-body);
+  font-weight: 500;
+  color: var(--text-sub);
+  text-decoration: none;
+  transition: background var(--dur-fast) var(--ease);
+}
+
+.navItem svg {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.navText {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.navItem:hover {
+  background: var(--bg-sunken);
+}
+
+.navItem:focus-visible {
+  outline: 2px solid var(--accent-text);
+  outline-offset: -2px;
+}
+
+/* 활성. 담당자 사이드바는 판 한 장이 미끄러져 옮겨 붙는데(.navPill), 여기는
+   네 칸뿐이라 그 장치를 옮기지 않았다 — 같은 색·같은 심지·같은 발광이다 */
+.navOn {
+  color: #fff;
+  background: var(--accent-soft);
+  border: var(--border-w) solid rgba(34, 211, 238, .30);
+  box-shadow: inset 2px 0 0 var(--accent), var(--sh-glow);
+  /* 테두리가 생기면서 48px 를 넘지 않게 */
+  padding: 0 calc(var(--sp-3) - 1px);
+}
+
+.navOn svg {
+  stroke: var(--accent);
+}
+
+/* 할 일 개수. **어느 탭에 볼 것이 있는지 한눈에 읽힌다** — 이것이 없으면
+   현황의 여정을 끝까지 읽어야 안다 */
+.badge {
+  flex: none;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: var(--r-pill);
+  background: var(--accent-fill);
+  color: var(--on-accent);
+  font-size: var(--font-cap);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ── 본문 자리 ─────────────────────────────────────
+
+   탭이 여기에 들어온다. 인적성·일정·면접은 자기 화면을 그대로 쓰되
+   `nested` 로 자기 배경과 100vh 를 접는다 (각 화면의 .page.nested). */
+.main {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 탭 한 장. **감출 뿐 버리지 않는다** — 안에서 답하던 것·돌던 면접이 살아
+   있어야 한다. 스크롤을 .main 이 아니라 여기서 내는 이유도 같다: 탭마다
+   자기 스크롤 자리를 기억한다 (앱에서 탭을 오갈 때와 같다) */
+.pane {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+/* [hidden] 은 display:block 을 가정하는데 위에서 flex 로 덮었다 — 되돌린다 */
+.pane[hidden] {
+  display: none;
+}
+
+/* 아직 받은 적 없는 탭. **오류처럼 그리지 않는다** — 담당자가 아직 안 보낸
+   것이지 지원자가 뭘 잘못한 게 아니다 (앱 ApplicantMissing 과 같은 문구) */
+.missing {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--sp-6);
+  text-align: center;
+  font-size: var(--font-sm);
+  line-height: 1.7;
+  color: var(--text-sub);
+  word-break: keep-all;
+  white-space: pre-line;
+}
+
+/* ── 설정 덮개 ───────────────────────────────────
+
+   지원자 화면에는 메뉴가 없어서 설정으로 갔다가 돌아올 길을 따로 만들어야
+   한다. 덮으면 닫기만 하면 제자리다. */
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--sp-5);
+  background: var(--scrim);
+  backdrop-filter: blur(2px);
+}
+
+.sheet {
+  width: 100%;
+  max-width: 440px;
+  max-height: calc(100vh - var(--sp-8));
+  display: flex;
+  flex-direction: column;
+  border: var(--border-w) solid var(--border);
+  border-radius: 10px;
+  background: #10182A;
+  box-shadow: var(--sh-overlay);
+  overflow: hidden;
+}
+
+.sheetHead {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-4) var(--sp-5);
+  border-bottom: var(--border-w) solid var(--border-soft);
+}
+
+.sheetTitle {
+  margin: 0;
+  font-size: var(--font-h2);
+  font-weight: 700;
+  color: var(--text);
+}
+
+.x {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: var(--r-ctl);
+  background: none;
+  color: var(--text-sub);
+  font-family: var(--sans);
+  font-size: var(--font-sm);
+  cursor: pointer;
+}
+
+.x:hover {
+  background: var(--bg-sunken);
+  color: var(--text);
+}
+
+.sheetBody {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--sp-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-5);
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.sectionName {
+  margin: 0;
+  font-size: var(--font-cap);
+  letter-spacing: var(--ls-cap);
+  text-transform: uppercase;
+  font-weight: 600;
+  color: var(--text-sub);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.hint {
+  margin: 0;
+  font-size: var(--font-caption);
+  color: var(--text-sub);
+  word-break: keep-all;
+}
+
+.hint strong {
+  color: var(--text);
+}
+
+/* 읽기 전용 칸은 눌러도 되는 것처럼 보이면 안 된다 */
+.input[readonly] {
+  background: var(--bg-sunken);
+  color: var(--text-sub);
+  cursor: default;
+}
+
+.wideBtn {
+  width: 100%;
+  height: 44px;
+  border: var(--border-w) solid var(--border);
+  border-radius: var(--r-ctl);
+  background: var(--bg-sunken);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: var(--font-sm);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease);
+}
+
+.wideBtn:hover:not(:disabled) {
+  background: var(--sunken-hover);
+}
+
+/* 아직 안 되는 것. **이유는 위 hint 가 글자로 말한다** — 흐린 버튼만
+   두면 고장인지 아직인지 구별이 안 된다 */
+.wideBtn:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
+
+/* 나가는 것. 빨간 테두리를 두르지 않는다 — 로그아웃은 되돌릴 수 있는 일이라
+   삭제와 같은 무게를 줄 이유가 없다(05-design §1 색은 판단에만) */
+.leave {
+  color: var(--text-sub);
+}
+
+.leave:hover {
+  color: var(--text);
+}
+
+/* ── 로그인·빈 상태에서 쓰는 것 ─────────────────── */
+
+/* 불러오는 동안의 칸. 폼까지 본문 폭으로 펴면 칸 하나가 화면을 가로지른다 */
+.column {
+  width: 100%;
+  max-width: 480px;
+  padding: var(--sp-6) var(--content-x) var(--sp-8);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+}
+.card {
+  background: var(--bg-elev);
+  backdrop-filter: var(--glass);
+  border: var(--border-w) solid var(--border);
+  border-radius: var(--r-card);
+  box-shadow: var(--sh-card);
+  padding: var(--sp-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.cardTitle {
+  font-size: var(--font-h2);
+  font-weight: 700;
+  color: var(--text);
+  text-shadow: var(--ts-heading);
+  margin: 0;
+  word-break: keep-all;
+}
+
+.emptyBig {
+  margin: 0;
+  font-size: var(--font-body);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.help {
+  font-size: var(--font-sm);
+  color: var(--text-sub);
+  margin: 0;
+  word-break: keep-all;
+  line-height: 1.6;
+}
+
+.label {
+  font-size: var(--font-caption);
+  font-weight: 600;
+  color: var(--text-sub);
+  margin: 0;
+}
+
+.input {
+  width: 100%;
+  height: 44px;
+  padding: 0 var(--sp-3);
+  border: var(--border-w) solid var(--border);
+  border-radius: var(--r-ctl);
+  background: rgba(255, 255, 255, .05);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: var(--font-body);
+}
+
+.input::placeholder {
+  color: rgba(230, 236, 250, .42);
+}
+
+.input:focus-visible {
+  outline: none;
+  border-color: rgba(255, 255, 255, .5);
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, .12);
+}
+
+/* 로그인 실패 문구. --danger 는 §1 확정 토큰 */
+.error {
+  margin: 0;
+  font-size: var(--font-sm);
+  color: var(--danger);
+  word-break: keep-all;
+}
+
+.foot {
+  margin: 0;
+  font-size: var(--font-caption);
+  color: var(--text-sub);
+  text-align: center;
+}
+
+.link {
+  color: var(--accent-text);
+  text-decoration: none;
+  border-bottom: var(--border-w) solid rgba(125, 211, 252, .35);
+}
+
+.link:hover {
+  border-bottom-color: var(--accent-text);
+}
+
+.skeleton {
+  height: 14px;
+  border-radius: var(--r-pill);
+  background: var(--bg-sunken);
+}
+
+/* 내 정보 덮개의 숫자 셋 — 앱(applicant_more_screen.dart)과 같은 값이다.
+   낸 지원 · 할 일 · 합격. 덮개에 안 넣으면 이름과 이메일만 남아, 지원자가
+   여기서 알 수 있는 것이 로그인 정보뿐이 된다 */
+.stats {
+  display: flex;
+  gap: var(--sp-2);
+}
+
+.stat {
+  flex: 1;
+  min-width: 0;
+  padding: var(--sp-3) var(--sp-2);
+  border: var(--border-w) solid var(--border);
+  border-radius: var(--r-card);
+  background: var(--bg-elev);
+  text-align: center;
+}
+
+.statN {
+  display: block;
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+/* 0 이면 색을 쓰지 않는다 — 없는 것을 강조할 이유가 없다 (앱과 같은 규칙) */
+.statTodo {
+  color: var(--accent-text);
+}
+
+.statWon {
+  color: var(--ok-text);
+}
+
+.statName {
+  display: block;
+  margin-top: 2px;
+  font-size: var(--font-cap);
+  color: var(--text-sub);
+}
+
+/* ── 좁으면 ───────────────────────────────────────
+
+   1100px 은 05-design §9 의 세 값 중 하나다. 사이드바 216px 를 빼고 나면
+   본문이 인적성 설문 한 칸(560px) + 좌우 --content-x 96px 를 겨우 쥔다.
+   그 아래에서는 **사이드바를 가로줄로 눕힌다** — 지우지 않는다. 지우면 앱에
+   있는 탭이 좁은 화면에서만 사라져, 돌아올 길이 다시 뒤로 가기뿐이 된다. */
+@media (max-width: 1100px) {
+  .body {
+    flex-direction: column;
+  }
+
+  .side {
+    width: auto;
+    border-right: none;
+    border-bottom: var(--border-w) solid var(--sidebar-line);
+  }
+
+  .sideStick {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: var(--sp-3);
+    padding: var(--sp-3) var(--sp-4);
+  }
+
+  .picker {
+    flex: none;
+    width: 220px;
+  }
+
+  /* 줄바꿈이 있어야 한다 — 420px 에서 네 칸 합이 496px 이라, 안 접으면
+     「AI 면접」이 화면 밖으로 나가 눌리지 않는다 (실측) */
+  .nav {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .navItem {
+    white-space: nowrap;
+  }
+
+  /* 눕히면 발광 심지가 항목 왼쪽이 아니라 아래에 와야 방향이 맞는다 */
+  .navOn {
+    box-shadow: inset 0 -2px 0 var(--accent), var(--sh-glow);
+  }
+
+}
+
+@media (max-width: 560px) {
+  .topbar {
+    padding: 0 var(--sp-4);
+    gap: var(--sp-3);
+  }
+
+  /* 좁으면 화면 이름을 접는다 — 로고와 계정이 먼저다 */
+  .divider,
+  .where {
+    display: none;
+  }
+
+  /* 이름도 접는다. 아바타만으로도 자기 계정인 것은 읽힌다 */
+  .tname {
+    display: none;
+  }
+
+  .picker {
+    width: 180px;
+  }
+}

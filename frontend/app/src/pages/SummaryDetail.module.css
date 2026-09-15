@@ -1,0 +1,454 @@
+/* 종합 평가 상세 · 서류·인적성·면접 세 섹션 (2026-09-14).
+   토큰은 tokens.css. Summary 페이지와 톤 일치. */
+
+.page {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--sp-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+}
+
+.state, .err {
+  font-size: var(--font-body);
+  color: var(--text-sub);
+  padding: var(--sp-4);
+  background: var(--bg-elev);
+  border-radius: var(--r-card);
+  border: var(--border-w) solid var(--border-soft);
+}
+
+.err {
+  color: var(--danger);
+}
+
+.dim {
+  color: var(--text-sub);
+  font-size: var(--font-sm);
+  margin: 0;
+}
+
+/* 상단 · 뒤로가기 + 지원자 정보 + 점수 보드 */
+.head {
+  display: flex;
+  gap: var(--sp-4);
+  align-items: flex-start;
+}
+
+.back {
+  background: transparent;
+  border: var(--border-w) solid var(--border);
+  border-radius: var(--r-ctl);
+  padding: var(--sp-2) var(--sp-3);
+  color: var(--text-sub);
+  cursor: pointer;
+  font-size: var(--font-sm);
+  font-family: inherit;
+  align-self: flex-start;
+}
+.back:hover { color: var(--text); background: var(--sunken-hover); }
+
+.headBody {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.name {
+  font-size: var(--font-display);
+  font-weight: 700;
+  color: var(--text);
+  text-shadow: var(--ts-heading);
+  margin: 0;
+}
+
+.meta {
+  font-size: var(--font-sm);
+  color: var(--text-sub);
+  margin: 0;
+}
+
+.scoreBoard {
+  display: flex;
+  gap: var(--sp-3);
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.pill {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-sunken);
+  border: var(--border-w) solid var(--border);
+  border-radius: var(--r-card);
+  padding: var(--sp-2) var(--sp-3);
+  min-width: 72px;
+}
+
+.pillStrong {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.pillLabel {
+  font-size: var(--font-caption);
+  color: var(--text-sub);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.pillValue {
+  font-size: var(--font-h1);
+  font-weight: 700;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.grade {
+  display: inline-block;
+  min-width: 40px;
+  text-align: center;
+  padding: 8px 12px;
+  border-radius: var(--r-ctl);
+  font-weight: 700;
+  font-size: var(--font-h1);
+  background: var(--bg-sunken);
+}
+.grade_A { background: var(--ok-soft); color: var(--ok-text); }
+.grade_B { background: rgba(96, 165, 250, 0.20); color: var(--accent-blue); }
+.grade_C { background: rgba(251, 191, 36, 0.16); color: var(--warn-text); }
+.grade_D { background: var(--danger-soft); color: var(--danger); }
+
+/* 섹션 공통 */
+.section {
+  background: var(--bg-elev);
+  border: var(--border-w) solid var(--border);
+  border-radius: var(--r-card);
+  padding: var(--sp-4);
+  box-shadow: var(--sh-card);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.sectionHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  padding-bottom: var(--sp-3);
+  border-bottom: var(--border-w) solid var(--border-soft);
+}
+.sectionTitle {
+  font-size: var(--font-h1);
+  font-weight: 700;
+  color: var(--text);
+  text-shadow: var(--ts-heading);
+  margin: 0;
+}
+.sectionMeta {
+  font-size: var(--font-sm);
+  color: var(--text-sub);
+  display: flex;
+  gap: var(--sp-2);
+  align-items: center;
+}
+
+.decision {
+  padding: 2px 8px;
+  border-radius: var(--r-pill);
+  font-weight: 600;
+  font-size: var(--font-caption);
+}
+.decision_pass { background: var(--ok-soft); color: var(--ok-text); }
+.decision_reject { background: var(--danger-soft); color: var(--danger); }
+.decision_hold { background: rgba(251, 191, 36, 0.16); color: var(--warn-text); }
+
+.gist {
+  font-size: var(--font-body);
+  color: var(--text);
+  line-height: 1.6;
+  margin: 0;
+}
+.gist strong {
+  font-weight: 700;
+}
+
+.insufficient {
+  color: var(--warn-text);
+  font-size: var(--font-body);
+  margin: 0;
+}
+
+.factBlock {
+  display: flex;
+  gap: var(--sp-3);
+  align-items: flex-start;
+}
+.factLabel {
+  min-width: 60px;
+  font-size: var(--font-caption);
+  font-weight: 700;
+  color: var(--text-sub);
+  letter-spacing: 0.06em;
+  padding-top: 2px;
+}
+.factList {
+  margin: 0;
+  padding-left: var(--sp-4);
+  line-height: 1.6;
+  color: var(--text);
+}
+
+/* 장/단점 두 열 */
+.prosCons {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--sp-3);
+}
+
+.pro, .conBox {
+  background: var(--bg-sunken);
+  border-radius: var(--r-card);
+  padding: var(--sp-3);
+  border-left: 3px solid var(--ok);
+}
+.conBox {
+  border-left-color: var(--danger);
+}
+
+.proLabel {
+  display: block;
+  font-size: var(--font-caption);
+  font-weight: 700;
+  color: var(--ok-text);
+  letter-spacing: 0.06em;
+  margin-bottom: var(--sp-2);
+}
+.conLabel {
+  color: var(--danger);
+}
+
+.proList {
+  margin: 0;
+  padding-left: var(--sp-4);
+  line-height: 1.6;
+  color: var(--text);
+}
+
+.subScores {
+  display: flex;
+  gap: var(--sp-3);
+  padding-top: var(--sp-2);
+  border-top: var(--border-w) solid var(--border-soft);
+}
+.subScore {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.subLabel {
+  font-size: var(--font-caption);
+  color: var(--text-sub);
+}
+.subValue {
+  font-size: var(--font-h2);
+  font-weight: 700;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 인적성 · 카테고리별 카드 */
+.aptGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: var(--sp-3);
+}
+.aptCat {
+  background: var(--bg-sunken);
+  border-radius: var(--r-card);
+  padding: var(--sp-3);
+  text-align: center;
+}
+.aptCatLabel {
+  font-size: var(--font-sm);
+  color: var(--text-sub);
+  margin-bottom: var(--sp-1);
+}
+.aptCatValue {
+  font-size: var(--font-h1);
+  font-weight: 700;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.aptCatCount {
+  font-size: var(--font-caption);
+  color: var(--text-sub);
+}
+
+/* 드롭다운 (질문별 · 전사 · 대조) */
+.dropdown {
+  border-top: var(--border-w) solid var(--border-soft);
+  padding-top: var(--sp-3);
+}
+.dropdownSummary {
+  cursor: pointer;
+  font-size: var(--font-sm);
+  color: var(--text-sub);
+  font-weight: 600;
+  list-style: none;
+}
+.dropdownSummary::-webkit-details-marker { display: none; }
+.dropdownSummary::before {
+  content: '▸';
+  display: inline-block;
+  margin-right: 6px;
+  transition: transform 120ms ease;
+}
+.dropdown[open] .dropdownSummary::before {
+  transform: rotate(90deg);
+}
+
+.perQuestion {
+  list-style: none;
+  padding: var(--sp-3) 0 0 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+.perQuestionItem {
+  display: grid;
+  grid-template-columns: 40px 60px 1fr;
+  gap: var(--sp-3);
+  align-items: baseline;
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--bg-sunken);
+  border-radius: var(--r-ctl);
+}
+.qSeq {
+  font-weight: 700;
+  color: var(--accent-text);
+  font-size: var(--font-sm);
+}
+.qScore {
+  font-weight: 700;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.qNote {
+  color: var(--text-sub);
+  font-size: var(--font-sm);
+  line-height: 1.5;
+}
+
+.turns {
+  list-style: none;
+  padding: var(--sp-3) 0 0 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+.turn {
+  padding: var(--sp-3);
+  background: var(--bg-sunken);
+  border-radius: var(--r-ctl);
+}
+.qText {
+  font-size: var(--font-sm);
+  color: var(--text-sub);
+  margin: 0 0 var(--sp-1);
+  font-weight: 600;
+}
+.aText {
+  font-size: var(--font-body);
+  color: var(--text);
+  line-height: 1.55;
+  margin: 0;
+}
+
+.findings {
+  list-style: none;
+  padding: var(--sp-3) 0 0 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+.finding {
+  display: grid;
+  grid-template-columns: 72px 1fr;
+  gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--bg-sunken);
+  border-radius: var(--r-ctl);
+  border-left: 3px solid var(--text-sub);
+}
+.finding_consistent { border-left-color: var(--ok); }
+.finding_inconsistent { border-left-color: var(--danger); }
+.finding_unverified { border-left-color: var(--warn); }
+
+.findingVerdict {
+  font-size: var(--font-caption);
+  font-weight: 700;
+  color: var(--text-sub);
+  padding-top: 2px;
+}
+.finding_consistent .findingVerdict { color: var(--ok-text); }
+.finding_inconsistent .findingVerdict { color: var(--danger); }
+.finding_unverified .findingVerdict { color: var(--warn-text); }
+
+.findingClaim {
+  font-size: var(--font-sm);
+  color: var(--text);
+  margin: 0;
+  line-height: 1.5;
+}
+.findingAnswer {
+  font-size: var(--font-caption);
+  color: var(--text-sub);
+  margin: 4px 0 0;
+  line-height: 1.5;
+}
+
+.linkBar {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-3);
+  padding-top: var(--sp-3);
+  border-top: var(--border-w) solid var(--border-soft);
+}
+.linkOut {
+  font-size: var(--font-sm);
+  color: var(--accent-text);
+  text-decoration: none;
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font-family: inherit;
+}
+.linkOut:hover { text-decoration: underline; }
+
+/* 자기소개서 원문 · 줄바꿈·공백을 그대로 보여준다 */
+.selfIntro {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+  font-size: var(--font-body);
+  line-height: 1.65;
+  color: var(--text);
+  background: var(--bg-sunken);
+  padding: var(--sp-3);
+  border-radius: var(--r-card);
+  margin: var(--sp-3) 0 0;
+  max-height: 480px;
+  overflow-y: auto;
+}
+
+@media (max-width: 720px) {
+  .prosCons { grid-template-columns: 1fr; }
+}

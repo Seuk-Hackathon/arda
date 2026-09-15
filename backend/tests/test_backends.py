@@ -569,6 +569,31 @@ class TestStructuredOutput:
             == _STEP_SCHEMAS["chain_evaluate"]
         )
 
+    def test_단계_스키마는_최신_프롬프트의_출력_예시와_키가_같다(self):
+        """스키마를 강제하는 백엔드(Ollama `format`)에서는 이 표가 곧 모델이 낼 수 있는 모양이다.
+
+        프롬프트만 v2 로 올리고 스키마를 v1 에 두고 온 어긋남(2026-09-15 발견 — 세 갈래
+        점수를 못 내 doc_score 가 20점 단위 폴백으로 떨어짐)을 다시 만들지 않는다.
+        프롬프트 파일의 첫 JSON 출력 예시와 키를 맞춘다.
+        """
+        import json
+        import re
+
+        from app.agent.prompts import resolve
+        from app.agent.summarizer import _STEP_SCHEMAS
+
+        for step, schema in _STEP_SCHEMAS.items():
+            path, _ = resolve(step)
+            example = re.search(
+                r"^\{\n.*?^\}", path.read_text(encoding="utf-8"), re.S | re.M
+            ).group(0)
+            keys = set(json.loads(example))
+            assert set(schema["properties"]) == keys, step
+            assert set(schema["required"]) <= keys, step
+        assert {"requirements_score", "preferred_score", "culture_score"} <= set(
+            _STEP_SCHEMAS["chain_evaluate"]["required"]
+        )
+
     def test_parse_json_은_실패해도_예외가_아니라_None(self):
         """능력 플래그가 거짓일 때 기대는 폴백 — 계약이 바뀌면 안 된다."""
         from app.agent.summarizer import _parse_json

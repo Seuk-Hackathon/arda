@@ -9,7 +9,8 @@
 ///
 /// **카메라와 마이크를 다른 파이프에 나눠 잡는 이유**: 안드로이드는 앱 안에서도
 /// AudioRecord 인스턴스가 하나뿐이라 flutter_webrtc 와 record 가 마이크를 같이
-/// 잡을 수 없다. 카메라는 flutter_webrtc 가 잡고, 마이크는 record 가 잡는다.
+/// 잡을 수 없다. 카메라는 flutter_webrtc 가 잡고, 마이크는 record 가 **혼자** 잡는다
+/// (WebRTC 는 `audio: false` — 2026-09-15, [InterviewRoomService.start] 주석).
 ///
 /// ## AI 면접 상태 흐름
 ///
@@ -221,12 +222,10 @@ class _InterviewLiveScreenState extends State<InterviewLiveScreen> {
     final token = widget.token;
     if (token == null) return;
 
-    // **WebRTC 먼저**. Android 는 새 AudioRecord 를 열면 앞서 열려 있던 것을
-    // 죽인다 — flutter_webrtc 의 PeerConnectionFactory 초기화 안에서 오디오
-    // 서브시스템을 건드리므로, 이걸 mic(record) 뒤에 두면 mic 가 조용히 끊긴다
-    // (2026-09-09 재현: mic 를 먼저 열었더니 실제로는 아무 조각도 안 도착).
-    // 순서를 바꿔 WebRTC 초기화 뒤에 mic 를 열면 마지막 AudioRecord 가 mic 라
-    // 조각이 살아 도착한다.
+    // **WebRTC 먼저**. flutter_webrtc 의 PeerConnectionFactory 초기화가 오디오
+    // 서브시스템을 건드리므로(마이크를 안 잡아도), 그 뒤에 mic(record) 를 여는
+    // 순서를 유지한다 — 2026-09-09 재현: mic 를 먼저 열었더니 조각이 안 도착했다.
+    // 마이크 자체는 이제 record 만 잡는다(2026-09-15).
     if (_service == null) {
       final service = widget.serviceOverride ?? InterviewRoomService(token);
       service.addListener(_onServiceChange);
@@ -688,8 +687,13 @@ class _BottomPanel extends StatelessWidget {
           children: [
             _title('${d.applicantName}님, 준비되셨나요?'),
             const SizedBox(height: AppSpace.s2),
+            // **AI 를 쓴다는 것을 지원자에게 알린다.** 질문과 답변 정리에 AI 가
+            // 쓰이고, 카메라·마이크로 본인 확인을 하며, 합격 여부는 사람이 정한다 —
+            // AI 이용정책(고위험 용도: 고지 + 사람 검토)과 개인정보 동의가 요구하는 것이다.
             _text(
-              '${d.postingTitle} 채용 면접입니다. 시작하면 담당자가 실시간으로 참여합니다. '
+              '${d.postingTitle} 채용 면접입니다. 질문 생성과 답변 정리에 AI(아르)가 쓰이고, '
+              '담당자가 실시간으로 참여합니다. 카메라·마이크는 본인 확인과 답변 기록에 쓰이며, '
+              '표정·음성 분석은 참고 신호일 뿐입니다. 합격 여부는 담당자가 직접 판단하고, '
               '면접 내용은 채용 검토 목적으로만 활용됩니다.',
               AppColors.textSub,
             ),

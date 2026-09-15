@@ -77,3 +77,13 @@
   from { opacity: 1; }
   to { opacity: 0.55; }
 }
+
+/* 지원자 셸(MyShell) 안에서 열릴 때 — **자기 배경과 100vh 를 접는다.**
+   셸이 이미 오로라와 높이를 들고 있어서, 안 접으면 어두운 판이 한 장 더
+   깔리고 화면 안에 화면이 생긴다. `.page.nested` 로 붙인 이유는 규칙 순서에
+   기대지 않으려는 것 — 한 칸 더 구체적이라 파일 어디에 있든 이긴다. */
+.page.nested {
+  min-height: 0;
+  background: none;
+  padding: var(--sp-5) var(--sp-4) var(--sp-8);
+}
