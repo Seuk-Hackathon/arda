@@ -10,6 +10,7 @@ import asyncio
 import time
 
 import numpy as np
+import pytest
 
 import interview_ws as iw
 from interview_ws import (
@@ -222,36 +223,18 @@ class TestScore:
         np.testing.assert_array_equal(vec, old)
 
 
-class TestVoiceSeconds:
-    """'답변 끝' 을 넘기기 전에 사람 목소리가 있는지 잰다 (2026-09-11).
-
-    크기만 보는 감지기는 폰 스피커 소리·잡음도 답변으로 잡았다(세션 57).
-    """
-
-    def test_무음은_목소리가_없다(self):
-        assert iw.voice_seconds(DEAD * 40) == 0.0
-
-    def test_잡음은_목소리로_보지_않는다(self):
-        v = iw.voice_seconds(LOUD * 60)  # 3초 가우스 잡음
-        assert v is not None and v < iw.MIN_VOICE_SEC
-
-    def test_못_재면_None(self, monkeypatch):
-        """None 이면 막지 않고 넘긴다 — VAD 가 없다고 면접이 멈추면 안 된다."""
-        import builtins
-
-        real = builtins.__import__
-
-        def fake(name, *a, **kw):
-            if name.startswith("faster_whisper"):
-                raise ImportError("없음")
-            return real(name, *a, **kw)
-
-        monkeypatch.setattr(builtins, "__import__", fake)
-        assert iw.voice_seconds(LOUD * 20) is None
+@pytest.fixture(autouse=True)
+def _no_api_by_default(monkeypatch):
+    """전사 시험은 **로컬 경로 기준**으로 쓴다. 프로덕션 컨테이너처럼 `STT_BACKEND=openai`
+    와 키가 환경에 있으면 시험이 진짜 API 를 타고 잡음을 전사해 빈 문자열이 온다 —
+    시험마다 명시적으로 켜기 전에는 꺼 둔다(`TestTranscribeViaApi._api_on`)."""
+    monkeypatch.setattr(iw, "STT_BACKEND", "")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
 
 class TestEndPhrase:
-    """"이상입니다" 로 답변을 끝낸다 (2026-09-11)."""
+    """받아쓴 글 끝의 "이상입니다" 는 뗀다. (2026-09-15 부터 답변을 **끝내는** 데는
+    안 쓴다 — 확인용 전사가 무음에 "이상입니다" 를 지어냈다. 버튼만 남았다.)"""
 
     def test_이상입니다로_끝나면_찾는다(self):
         assert iw.ends_with_phrase("네 그렇게 했습니다. 이상입니다.")
@@ -270,43 +253,6 @@ class TestEndPhrase:
         assert iw.strip_end_phrase("이상입니다") == ""
         assert iw.strip_end_phrase("이상한 점은 없었습니다") == "이상한 점은 없었습니다"
         assert iw.strip_end_phrase("[전사 지연 · 발화 8.9초]") == "[전사 지연 · 발화 8.9초]"
-
-    def test_전사가_꺼져_있으면_모른다(self, monkeypatch):
-        """None 이면 버튼·상한만 남는다 — "이상입니다" 가 없다고 면접이 멈추지 않는다."""
-        monkeypatch.setattr(iw, "STT_MODEL", "")
-        assert iw.says_done(LOUD * 20) is None
-
-    def test_목소리가_모자라면_전사를_부르지_않는다(self, monkeypatch):
-        """무음 hallucination 게이트 (2026-09-15). Whisper 가 무음에 "이상입니다"
-        를 지어내 답변이 강제 종료됐다(세션 77)."""
-        called = []
-        monkeypatch.setattr(iw, "STT_MODEL", "large-v3-turbo")
-        monkeypatch.setattr(iw, "voice_seconds", lambda pcm: 0.2)  # < 0.6
-        monkeypatch.setattr(iw, "_stt_model", lambda: called.append(1) or object())
-        assert iw.says_done(LOUD * 40) is False
-        assert called == [], "목소리 부족이면 whisper 를 부르지 않아야 한다"
-
-    def test_목소리가_충분하면_확인한다(self, monkeypatch):
-        class FakeModel:
-            def transcribe(self, audio, **kw):
-                return [type("S", (), {"text": "네 이상입니다"})()], None
-        monkeypatch.setattr(iw, "STT_BACKEND", "")
-        monkeypatch.setattr(iw, "STT_MODEL", "large-v3-turbo")
-        monkeypatch.setattr(iw, "voice_seconds", lambda pcm: 0.8)  # ≥ 0.6
-        monkeypatch.setattr(iw, "_stt_model", lambda: FakeModel())
-        assert iw.says_done(LOUD * 40) is True
-
-    def test_VAD_를_못_재도_통과한다(self, monkeypatch):
-        """VAD 반환이 None 이면 게이트에서 안 걸린다 — 재는 것을 못 하는 것을
-        이유로 상한(180초)까지 답변을 안 넘기지는 않는다."""
-        class FakeModel:
-            def transcribe(self, audio, **kw):
-                return [type("S", (), {"text": "네 이상입니다"})()], None
-        monkeypatch.setattr(iw, "STT_BACKEND", "")
-        monkeypatch.setattr(iw, "STT_MODEL", "large-v3-turbo")
-        monkeypatch.setattr(iw, "voice_seconds", lambda pcm: None)
-        monkeypatch.setattr(iw, "_stt_model", lambda: FakeModel())
-        assert iw.says_done(LOUD * 40) is True
 
     def test_면접_소켓은_멈춤을_짧게_잰다(self):
         """끝이 아니라 확인 시점이라 짧다. 담당자 화면용 감지기는 그대로다."""
@@ -460,8 +406,10 @@ class TestTranscribeViaApi:
         (c,) = calls
         assert c["data"]["model"] == iw.OPENAI_STT_MODEL
         assert c["data"]["language"] == "ko"
-        # 면접 질문 힌트 — 로컬의 initial_prompt 와 같은 자리
-        assert c["data"]["prompt"] == "쿼리 튜닝은?"
+        # API 에는 힌트를 넘기지 않는다 — 무음에 그 글을 그대로 뱉는다 (세션 77, PR #241)
+        assert "prompt" not in c["data"]
+        # 조각별 no_speech_prob 를 받으려면 verbose_json 이어야 한다
+        assert c["data"]["response_format"] == "verbose_json"
         assert c["headers"]["Authorization"] == "Bearer k"
         _name, body, mime = c["files"]["file"]
         assert body[:4] == b"RIFF" and mime == "audio/wav"
@@ -500,14 +448,43 @@ class TestTranscribeViaApi:
         # 빈 문자열이면 "말이 없었다" 로 읽혀 답변이 버려진다 — 자리표시자여야 한다
         assert out.startswith("[전사 불가")
 
-    def test_이상입니다_확인도_API_로_한다(self, monkeypatch):
+    def test_무음에_지어낸_조각은_버린다(self, monkeypatch):
+        """whisper-1 은 무음·잡음에 "감사합니다" 를 만든다(세션 77). `verbose_json`
+        의 `no_speech_prob` 로 그 조각만 버리고 사람 말은 남긴다."""
         import httpx
+
+        body = {
+            "text": "감사합니다. 캐시를 붙였습니다.",
+            "segments": [
+                {"text": " 감사합니다.", "no_speech_prob": 0.93},
+                {"text": " 캐시를 붙였습니다.", "no_speech_prob": 0.02},
+            ],
+        }
+
+        def post(url, headers=None, data=None, files=None, timeout=None):
+            assert data["response_format"] == "verbose_json"
+
+            class R:
+                def raise_for_status(self):
+                    pass
+
+                def json(self):
+                    return body
+
+            return R()
 
         self._api_on(monkeypatch)
         monkeypatch.setattr(iw, "STT_MODEL", "")
-        monkeypatch.setattr(httpx, "post", self._fake_post([], text="네, 이상입니다."))
+        monkeypatch.setattr(httpx, "post", post)
+        assert iw.transcribe(LOUD * 40) == "캐시를 붙였습니다."
 
-        assert iw.says_done(LOUD * 40) is True
+    def test_전부_무음이면_빈_문자열(self):
+        """빈 문자열이 곧 "말이 없었다" — 서버가 `retry` 를 보내는 근거다."""
+        body = {"text": "감사합니다.", "segments": [{"text": " 감사합니다.", "no_speech_prob": 0.9}]}
+        assert iw._text_without_silence(body) == ""
+
+    def test_조각_정보가_없으면_text_를_그대로(self):
+        assert iw._text_without_silence({"text": " 답변 "}) == "답변"
 
     def test_WAV_머리를_붙인다(self):
         wav = iw._pcm_to_wav(b"\x00\x01" * 16000)
