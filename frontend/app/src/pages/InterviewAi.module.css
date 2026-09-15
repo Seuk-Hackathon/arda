@@ -196,3 +196,23 @@
   .stateDotLive,
   .liveDotPulse { animation: none; }
 }
+
+/* 지원자 셸(MyShell) 안에서 열릴 때 (2026-09-15).
+
+   셸이 오로라와 높이를 이미 들고 있다. 배경을 접고 최소 높이만 남긴다 —
+   `min-height: 0` 이면 카메라 칸이 있는 화면이 위로 쪼그라들어, 면접 중에
+   화면 아래가 텅 빈다. 본문 자리를 그대로 채운다(100%).
+
+   **폭에 상한을 준다.** 이 화면은 폰 세로가 기본이라 줄이 짧은데, 셸 본문은
+   1200px 가 넘는다 — 안 자르면 질문 한 줄이 화면을 가로지른다. */
+.page.nested {
+  min-height: 100%;
+  background: none;
+}
+
+.page.nested .body {
+  width: 100%;
+  max-width: 560px;
+  margin: 0 auto;
+  padding: var(--sp-5) var(--sp-4) var(--sp-8);
+}
