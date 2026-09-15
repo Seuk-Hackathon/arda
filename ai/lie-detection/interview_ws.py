@@ -1154,6 +1154,14 @@ def _run_transcribe(model, audio, hint: str = "") -> str:
 # 있는지 잰다. 이 VAD 가 아무것도 못 찾으면 전사도 빈 문자열이다 — 답변이 아니다.
 MIN_VOICE_SEC = float(os.getenv("MIN_VOICE_SEC", "0.3"))
 
+# "이상입니다" 확인용 끝부분 4초 중 실제 목소리가 이만큼 없으면 whisper 를 부르지
+# 않는다 (2026-09-15, 세션 77). Whisper 는 무음·짧은 발화에 흔한 종결어를 뱉는
+# hallucination 이 있고("이상입니다", "감사합니다"), 그것이 답변 종료로 이어져
+# 지원자가 실제로는 짧게 답하고 조용해진 것뿐인데 다음 질문으로 강제로 넘어갔다.
+# 실제 "이상입니다" 발음은 최소 0.6초 걸린다 — 그 아래면 사람 말이 아니라 whisper
+# 환각으로 본다.
+MIN_END_PHRASE_VOICE_SEC = float(os.getenv("MIN_END_PHRASE_VOICE_SEC", "0.6"))
+
 # 밖에서 갈라 볼 계기판 (`/health`) — 넘긴 것 · 거른 것 · 못 잰 것(→ 막지 않고 넘김).
 # 질문이 안 넘어간다는 말이 나오면 `rejected` 가 느는지부터 본다.
 ANSWER_STATS = {
@@ -1241,6 +1249,15 @@ def says_done(pcm: bytes) -> bool | None:
     tail = pcm[-need:]
     usable = len(tail) - (len(tail) % SAMPLE_WIDTH)
     if usable == 0:
+        return False
+    # **hallucination 게이트** (2026-09-15). 끝부분 4초 안에 사람 목소리가
+    # MIN_END_PHRASE_VOICE_SEC 미만이면 whisper 를 부르지 않는다 — 부르면 무음에
+    # "이상입니다" 를 지어내 답변이 강제 종료된다(세션 77 실측). 실제로 지원자가
+    # "이상입니다" 라고 말했다면 목소리가 그 이상 있다. VAD 를 못 재는 상황(반환값
+    # None)에서는 걸지 않고 통과 — 못 재는 것을 이유로 "이상입니다" 확인을 원천
+    # 봉쇄하면 되레 상한(180초)까지 답변이 안 넘어간다.
+    voice = voice_seconds(tail[:usable])
+    if voice is not None and voice < MIN_END_PHRASE_VOICE_SEC:
         return False
     if stt_via_api():
         # 끝부분 몇 초라 API 로도 1초 안팎. 로컬 모델을 CPU 에 물고 있지 않아도 된다

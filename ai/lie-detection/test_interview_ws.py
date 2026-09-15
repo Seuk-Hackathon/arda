@@ -276,6 +276,38 @@ class TestEndPhrase:
         monkeypatch.setattr(iw, "STT_MODEL", "")
         assert iw.says_done(LOUD * 20) is None
 
+    def test_목소리가_모자라면_전사를_부르지_않는다(self, monkeypatch):
+        """무음 hallucination 게이트 (2026-09-15). Whisper 가 무음에 "이상입니다"
+        를 지어내 답변이 강제 종료됐다(세션 77)."""
+        called = []
+        monkeypatch.setattr(iw, "STT_MODEL", "large-v3-turbo")
+        monkeypatch.setattr(iw, "voice_seconds", lambda pcm: 0.2)  # < 0.6
+        monkeypatch.setattr(iw, "_stt_model", lambda: called.append(1) or object())
+        assert iw.says_done(LOUD * 40) is False
+        assert called == [], "목소리 부족이면 whisper 를 부르지 않아야 한다"
+
+    def test_목소리가_충분하면_확인한다(self, monkeypatch):
+        class FakeModel:
+            def transcribe(self, audio, **kw):
+                return [type("S", (), {"text": "네 이상입니다"})()], None
+        monkeypatch.setattr(iw, "STT_BACKEND", "")
+        monkeypatch.setattr(iw, "STT_MODEL", "large-v3-turbo")
+        monkeypatch.setattr(iw, "voice_seconds", lambda pcm: 0.8)  # ≥ 0.6
+        monkeypatch.setattr(iw, "_stt_model", lambda: FakeModel())
+        assert iw.says_done(LOUD * 40) is True
+
+    def test_VAD_를_못_재도_통과한다(self, monkeypatch):
+        """VAD 반환이 None 이면 게이트에서 안 걸린다 — 재는 것을 못 하는 것을
+        이유로 상한(180초)까지 답변을 안 넘기지는 않는다."""
+        class FakeModel:
+            def transcribe(self, audio, **kw):
+                return [type("S", (), {"text": "네 이상입니다"})()], None
+        monkeypatch.setattr(iw, "STT_BACKEND", "")
+        monkeypatch.setattr(iw, "STT_MODEL", "large-v3-turbo")
+        monkeypatch.setattr(iw, "voice_seconds", lambda pcm: None)
+        monkeypatch.setattr(iw, "_stt_model", lambda: FakeModel())
+        assert iw.says_done(LOUD * 40) is True
+
     def test_면접_소켓은_멈춤을_짧게_잰다(self):
         """끝이 아니라 확인 시점이라 짧다. 담당자 화면용 감지기는 그대로다."""
         s = iw.InterviewSession("tok")
