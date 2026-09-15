@@ -3,7 +3,6 @@ import type { ReactNode } from 'react'
 import {
   Navigate,
   NavLink,
-  Outlet,
   useLocation,
   useNavigate,
   useSearchParams,
@@ -12,7 +11,9 @@ import { getApplicantToken, setApplicantToken } from '../api/client'
 import { applicantAuth } from '../api/endpoints'
 import type { ApplicantMe, MyApplication } from '../api/types'
 import BrandMark from '../components/BrandMark'
-import { isOver, shortDate, tasksOf, todoCount, type MyCtx, type TabKey } from './myApplicant'
+import { isOver, MyContext, shortDate, tasksOf, todoCount, type TabKey } from './myApplicant'
+import MyApplications from './MyApplications'
+import { MyAptitude, MyInterview, MySchedule } from './MyTabs'
 import styles from './MyShell.module.css'
 
 /* 지원자 웹 셸 (ADR-0033) — 이메일 + 생년월일 8자리로 들어온다.
@@ -176,6 +177,13 @@ export default function MyShell() {
      이 화면 위에 덮는다(담당자 쪽 Settings 는 사이드바가 있어 라우트다) */
   const [info, setInfo] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
+  /* 한 번이라도 연 탭 (앱의 `_opened`). 안 연 것은 만들지 않는다 — 처음부터
+     넷을 다 만들면 화면을 켜는 순간 네 화면이 각자 자기 링크를 부른다 */
+  const [opened, setOpened] = useState<ReadonlySet<string>>(() => new Set())
+
+  /* 지금 탭. 주소만 보면 아는 값이라 이른 return 들보다 위에 둔다 —
+     아래 effect 가 훅 순서를 어기지 않게 */
+  const here = TABS.find((t) => t.path !== '' && pathname === `/my/${t.path}`) ?? TABS[0]
 
   /* 한 번이라도 받아 왔는가. **두 번째부터는 실패해도 보던 것을 뺏지 않는다** —
      탭을 옮길 때마다 부르는데, 잠깐의 네트워크 끊김으로 로그인 화면에 튕기면
@@ -212,6 +220,12 @@ export default function MyShell() {
     void load(ac.signal)
     return () => ac.abort()
   }, [load, preview, pathname])
+
+  /* 연 탭을 기억해 둔다. 그리는 것은 위 `show` 가 이미 했고, 이 기록은
+     **다음에 다른 탭으로 옮겼을 때 이 탭을 살려 두기 위한 것**이다 */
+  useEffect(() => {
+    setOpened((prev) => (prev.has(here.path) ? prev : new Set(prev).add(here.path)))
+  }, [here.path])
 
   /* 내 정보 — Esc 로 닫는다. 바깥 클릭은 스크림이 받는다 */
   useEffect(() => {
@@ -297,8 +311,9 @@ export default function MyShell() {
   if (preview) carry.set('preview', '')
   const search = carry.toString()
 
-  const here =
-    TABS.find((t) => t.path !== '' && pathname === `/my/${t.path}`) ?? TABS[0]
+  /* 지금 탭은 `opened` 에 들어가기 전에도 그린다 — effect 를 기다리면 탭을
+     처음 열 때 한 프레임이 빈다 */
+  const show = new Set(opened).add(here.path)
 
   const tasks = app === null ? [] : tasksOf(app)
   const todoOf = (path: TabKey) =>
@@ -413,8 +428,36 @@ export default function MyShell() {
           </div>
         </aside>
 
+        {/* **한 번 연 탭은 살려 둔다** — 감출 뿐 버리지 않는다.
+
+            라우트로 갈아 끼우던 것을 바꾼 것이다(2026-09-15). 갈아 끼우면
+            탭을 누를 때마다 앞 화면이 통째로 사라져서:
+            - **인적성에서 답하던 것이 날아갔다** (3/10 → 현황 갔다 오면 0/10, 실측)
+            - **AI 면접 중에 다른 탭을 누르면 면접이 끊겼다.** 게다가 소켓·카메라만
+              닫히고 `/finish` 는 안 불려(useAiInterview 는 「면접 끝내기」에서만
+              부른다) 담당자 화면에 「아직 보는 중」으로 영영 남았다
+
+            앱은 이 문제가 없다 — `IndexedStack` 이 한 번 연 탭을 살려 둔다
+            (applicant_shell.dart). 같은 것을 여기서도 한다.
+
+            안 연 탭은 만들지 않는다(앱의 `_opened` 와 같다). 처음부터 넷을 다
+            만들면 화면을 켜는 순간 네 화면이 각자 자기 링크를 부른다. */}
         <div className={styles.main}>
-          <Outlet context={{ me, app, preview } satisfies MyCtx} />
+          <MyContext.Provider value={{ me, app, preview }}>
+            {TABS.filter((t) => show.has(t.path)).map((t) => (
+              <div key={t.path} className={styles.pane} hidden={t.path !== here.path}>
+                {t.path === '' ? (
+                  <MyApplications />
+                ) : t.path === 'aptitude' ? (
+                  <MyAptitude />
+                ) : t.path === 'schedule' ? (
+                  <MySchedule />
+                ) : (
+                  <MyInterview />
+                )}
+              </div>
+            ))}
+          </MyContext.Provider>
         </div>
       </div>
 

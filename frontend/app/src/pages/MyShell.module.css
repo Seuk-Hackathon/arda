@@ -539,8 +539,22 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
-  /* 스크롤은 여기서 난다 — 상단 바와 사이드바는 제자리에 남는다 */
+}
+
+/* 탭 한 장. **감출 뿐 버리지 않는다** — 안에서 답하던 것·돌던 면접이 살아
+   있어야 한다. 스크롤을 .main 이 아니라 여기서 내는 이유도 같다: 탭마다
+   자기 스크롤 자리를 기억한다 (앱에서 탭을 오갈 때와 같다) */
+.pane {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
   overflow-y: auto;
+}
+
+/* [hidden] 은 display:block 을 가정하는데 위에서 flex 로 덮었다 — 되돌린다 */
+.pane[hidden] {
+  display: none;
 }
 
 /* 아직 받은 적 없는 탭. **오류처럼 그리지 않는다** — 담당자가 아직 안 보낸

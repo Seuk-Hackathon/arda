@@ -1,4 +1,4 @@
-import { useOutletContext } from 'react-router-dom'
+import { createContext, useContext } from 'react'
 import type { ApplicantMe, MyApplication, MyTokenLink } from '../api/types'
 
 /* 지원자 웹 화면들이 **함께 쓰는 판단**만 모은 곳 (2026-09-15).
@@ -14,6 +14,10 @@ import type { ApplicantMe, MyApplication, MyTokenLink } from '../api/types'
    앱의 셸이 `me` 와 토큰을 탭에 넘겨주는 것과 같다(applicant_shell.dart 의
    `_body`). 탭은 서버를 다시 부르지 않는다 — 셸이 한 번 받은 것을 나눠 쓴다.
 
+   `useOutletContext` 가 아니라 평범한 context 다 (2026-09-15). 셸이 탭을
+   `<Outlet>` 으로 갈아 끼우던 것을 **살려 두는 방식**으로 바꾸면서 Outlet 이
+   없어졌다 — 아래 MyShell 주석에 이유가 있다.
+
    셸(MyShell.tsx)이 아니라 여기 있는 이유: 컴포넌트만 내보내는 파일이어야
    vite 의 fast refresh 가 산다(oxlint `only-export-components`). */
 export interface MyCtx {
@@ -23,8 +27,12 @@ export interface MyCtx {
   preview: boolean
 }
 
+export const MyContext = createContext<MyCtx | null>(null)
+
 export function useMy(): MyCtx {
-  return useOutletContext<MyCtx>()
+  const ctx = useContext(MyContext)
+  if (ctx === null) throw new Error('useMy 는 MyShell 안에서만 쓴다')
+  return ctx
 }
 
 /* ── 어느 것을 여는가 ────────────────────────────────
