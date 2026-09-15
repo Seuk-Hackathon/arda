@@ -297,6 +297,13 @@
 }
 
 .side {
+  /* **「보고 있는 지원」 목록이 본문 위로 떨어져야 한다.** 사이드바가 눕는
+     폭(1100px 아래)에서는 그 목록이 본문 자리를 덮는다. 지금은 backdrop-filter
+     가 만든 쌓임 맥락 덕에 우연히 맞지만, 우연에 기대지 않는다 — 담당자
+     사이드바도 같은 줄을 갖고 있고, 없앴다가 손잡이가 반쪽만 보인 적이 있다
+     (Sidebar.module.css, 2026-09-07) */
+  position: relative;
+  z-index: var(--z-dropdown);
   width: var(--sidebar-w);
   flex: none;
   background: var(--sidebar-bg);

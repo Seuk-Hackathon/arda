@@ -271,6 +271,15 @@ export default function MyShell() {
 
      로딩만 여기서 그린다. 토큰이 살아 있는 동안의 짧은 사이라 화면을 옮기면
      오히려 깜빡인다. */
+  /* 모르는 주소는 현황으로 되돌린다 (`/my/garbage`, 옛 북마크, 오타).
+
+     `/my/*` 하나가 아래를 다 받으므로 라우터는 이런 것도 셸에 들여보낸다.
+     그냥 두면 **현황 내용이 뜨는데 사이드바에는 아무것도 선택되어 있지 않다** —
+     지금 어느 탭인지 화면이 말을 못 한다(실측). 주소를 고쳐 준다. */
+  if (pathname !== '/my' && !TABS.some((t) => t.path !== '' && pathname === `/my/${t.path}`)) {
+    return <Navigate to={{ pathname: '/my', search: params.toString() }} replace />
+  }
+
   if (view.kind === 'login') {
     return <Navigate to="/login?as=applicant" replace />
   }
