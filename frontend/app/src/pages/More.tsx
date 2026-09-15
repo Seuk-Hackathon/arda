@@ -52,14 +52,8 @@ export default function More() {
           </div>
         </div>
 
-        {/* 메뉴 그룹 1 */}
-        <div className={styles.group}>
-          <button type="button" className={styles.item} onClick={() => navigate('/evaluations')}>
-            <Icon><path d="M12 3.8l2.5 5 5.5.8-4 3.9.9 5.5-4.9-2.6-4.9 2.6.9-5.5-4-3.9 5.5-.8z" /></Icon>
-            <span className={styles.itemLabel}>평가 현황</span>
-            <ChevronRight />
-          </button>
-        </div>
+        {/* 「평가 현황」이 여기 있었다. 2026-09-15 에 지웠다 — 평가는 지원자
+            상세에서 남긴다. 그래서 첫 그룹이 통째로 없어졌다. */}
 
         {/* 메뉴 그룹 2 */}
         <div className={styles.group}>

@@ -8,31 +8,22 @@
 /// 단계 인원과 지원자를 주므로 **요청이 하나도 더 들지 않는다.**
 library;
 
-import '../api/api_client.dart';
-import '../api/endpoints.dart';
 import '../models/interview.dart';
 import '../models/job_posting.dart';
 import '../models/stage.dart';
 import 'posting_repository.dart';
 import 'schedule_repository.dart';
 
-/// 배정 한 건 — `AssignmentOut` 에서 화면이 쓰는 것만.
-typedef Assignment = ({int applicationId, DateTime assignedAt});
-
 /// 대시보드 한 화면에 필요한 것 전부.
 class DashboardData {
   const DashboardData({
     required this.todayInterviews,
-    required this.reviewWaiting,
     required this.openPostings,
     required this.stageCounts,
   });
 
   /// 오늘 확정된 면접
   final List<Interview> todayInterviews;
-
-  /// 내게 배정됐는데 아직 안 본 건수 — 이 앱을 켜는 가장 큰 이유
-  final int reviewWaiting;
 
   /// 진행중 공고 + 그 공고의 단계별 인원
   final List<PostingWithCounts> openPostings;
@@ -62,9 +53,9 @@ class ScheduleChip {
 }
 
 class DashboardRepository {
-  const DashboardRepository(this._client, this._postings, this._schedules);
-
-  final ApiClient _client;
+  /// 2026-09-15 까지 `ApiClient` 도 받았다 — 내 리뷰 대기 수를 직접 물었는데,
+  /// 평가 현황을 지우면서 그 호출이 없어져 이제 다른 저장소만 엮는다
+  const DashboardRepository(this._postings, this._schedules);
   final PostingRepository _postings;
   final ScheduleRepository _schedules;
 
@@ -72,13 +63,14 @@ class DashboardRepository {
   /// 웹은 5명이고 앱 화면은 3명이다(dashboard_screen.dart `_perStage`)
   static const namedPerStage = 3;
 
-  Future<DashboardData> load({required int userId, DateTime? today}) async {
+  Future<DashboardData> load({DateTime? today}) async {
     final day = today ?? DateTime.now();
 
-    // 셋을 동시에 던진다. 순서대로 기다릴 이유가 없다
-    final (interviews, waiting, postings) = await (
+    // 둘을 동시에 던진다. 순서대로 기다릴 이유가 없다.
+    // 2026-09-15 까지 셋이었다 — `GET /interviewers/{me}/applications`(내 리뷰
+    // 대기 수)가 있었는데, 평가 현황을 지우면서 그 숫자도 갈 데가 없어졌다
+    final (interviews, postings) = await (
       _schedules.between(day, day),
-      _reviewWaitingCount(userId),
       _postings.list(),
     ).wait;
 
@@ -97,39 +89,8 @@ class DashboardRepository {
 
     return DashboardData(
       todayInterviews: interviews,
-      reviewWaiting: waiting,
       openPostings: open,
       stageCounts: counts,
     );
-  }
-
-  /// 내게 배정된 건수 — `GET /interviewers/{id}/applications` 의 `count`.
-  ///
-  /// 대시보드는 숫자만 보여 주므로 목록을 안 쓴다. 이름이 필요한 평가 대기
-  /// 큐는 [assignments] 로 배정을 받아 사람마다 상세를 더 받는다.
-  Future<int> _reviewWaitingCount(int userId) async {
-    final json = await _client.get(Endpoints.assignedApplications(userId));
-    return json['count'] as int? ?? 0;
-  }
-
-  /// 내게 배정된 건 — 평가 현황이 쓴다.
-  ///
-  /// **응답에 이름도 공고명도 없다**(`AssignmentOut` 은 id·시각뿐). 화면을
-  /// 그리려면 건마다 상세를 한 번 더 받아야 한다 — 웹 `Evaluations.tsx` 도
-  /// 똑같이 `Promise.all` 로 병렬로 받는다. 배정이 보통 몇 건이라 그게 낫다.
-  ///
-  /// `created_at` 은 **배정된 시각**이다. '배정 n일째' 가 여기서 나온다 —
-  /// 지원일을 쓰면 어제 배정된 건이 "20일째"로 뜬다.
-  Future<List<Assignment>> assignments(int userId) async {
-    final json = await _client.get(Endpoints.assignedApplications(userId));
-    return [
-      for (final a in (json['assignments'] as List? ?? const []))
-        (
-          applicationId: (a as Map<String, dynamic>)['application_id'] as int,
-          assignedAt:
-              DateTime.tryParse(a['created_at'] as String? ?? '') ??
-              DateTime.now(),
-        ),
-    ];
   }
 }
