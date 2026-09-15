@@ -16,7 +16,9 @@ import InterviewRoom from './pages/InterviewRoom'
 import InterviewLive from './pages/InterviewLive'
 import InterviewAi from './pages/InterviewAi'
 import InterviewWatch from './pages/InterviewWatch'
+import MyShell from './pages/MyShell'
 import MyApplications from './pages/MyApplications'
+import { MyAptitude, MyInterview, MySchedule } from './pages/MyTabs'
 import Aptitude from './pages/Aptitude'
 import Dashboard from './pages/Dashboard'
 import Postings from './pages/Postings'
@@ -63,8 +65,18 @@ export default function App() {
         <Route path="/interview/:token" element={<InterviewAi />} />
         {/* 지원자 본인 화면 (ADR-0033) — 이메일 + 생년월일로 들어온다.
             **담당자 로그인(`/login`)과 다른 자리다.** 같은 화면에 두면 지원자가
-            담당자 계정으로 들어가려다 막힌다. 토큰도 자리를 나눠 뒀다. */}
-        <Route path="/my" element={<MyApplications />} />
+            담당자 계정으로 들어가려다 막힌다. 토큰도 자리를 나눠 뒀다.
+
+            2026-09-15: 앱(ApplicantShell)처럼 **셸 + 탭**이 됐다. 셸이
+            `/applicant/me` 를 한 번 부르고 탭에 나눠 준다. 아래 토큰 라우트
+            (`/aptitude/:token` 등)는 **그대로 산다** — 메일 링크 착지점이고,
+            로그인 없이 토큰만 들고 오는 사람이 있다. */}
+        <Route path="/my" element={<MyShell />}>
+          <Route index element={<MyApplications />} />
+          <Route path="aptitude" element={<MyAptitude />} />
+          <Route path="schedule" element={<MySchedule />} />
+          <Route path="interview" element={<MyInterview />} />
+        </Route>
         {/* 지원자 쪽 실시간 면접 — 면접관과 얼굴을 보고 말한다.
             채용자 쪽은 /interview-room/:sessionId 다. 로그인 밖 — 토큰이 곧 자격. */}
         <Route path="/interview-live/:token" element={<InterviewLive />} />
