@@ -715,7 +715,9 @@ _Line _aptitudeLine(MyApplication app) {
   }
   // 낸 것(`done`)도 내려온다 — **끝난 것을 안 보여 주면 "완료"와 "아직 안
   // 잡힘"이 같은 화면이 된다**
-  final first = app.aptitudes.first;
+  // 탭이 여는 것과 **같은 세션**을 본다 (pickLink) — 다르면 홈이
+  // 「3일 남음」이라 하고 탭은 「기한이 지났습니다」를 띄운다
+  final first = pickLink(app.aptitudes)!;
   if (first.status == 'done') {
     return const _Line(
       tab: ApplicantTab.aptitude,
@@ -745,7 +747,7 @@ _Line _scheduleLine(MyApplication app) {
     );
   }
   // 일정만 `confirmed` 도 온다 — 확정 뒤에도 "언제로 잡혔는지" 볼 일이 있다
-  final first = app.schedules.first;
+  final first = pickLink(app.schedules)!;
   final fixed = first.status == 'confirmed';
   return _Line(
     tab: ApplicantTab.schedule,
@@ -769,11 +771,9 @@ _Line _interviewLine(MyApplication app) {
       action: '',
     );
   }
-  // **끝난 것을 먼저 본다.** 면접을 여러 번 만들 수 있어(재발급) 목록에
-  // 끝난 것과 새 것이 같이 올 수 있는데, 그럴 땐 **아직 할 일이 있는 쪽**이
-  // 지원자가 알아야 하는 것이다.
-  final open = app.interviews.where((i) => i.status != 'done');
-  if (open.isEmpty) {
+  // 탭이 여는 것과 같은 세션을 본다 (pickLink)
+  final next = pickLink(app.interviews)!;
+  if (next.status == 'done') {
     return const _Line(
       tab: ApplicantTab.interview,
       label: 'AI 면접',
@@ -783,7 +783,6 @@ _Line _interviewLine(MyApplication app) {
       tone: _Tone.done,
     );
   }
-  final next = open.first;
   final going = next.status == 'in_progress';
   return _Line(
     tab: ApplicantTab.interview,
