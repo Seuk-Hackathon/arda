@@ -11,7 +11,13 @@ enum AptitudeStatus {
   pending('pending'),
 
   /// 제출했다. **다시 낼 수 없다** (서버가 막는다)
-  submitted('submitted'),
+  ///
+  /// **값이 'done' 이다** — 서버가 그렇게 쓴다(aptitude.py 의 submit).
+  /// 2026-09-15 까지 'submitted' 로 적혀 있어서, 제출한 지원자가 인적성 탭에서
+  /// 「기한이 지났습니다」를 봤다: parse 가 모르는 값을 expired 로 떨어뜨리는데
+  /// 서버의 'done' 이 바로 그 모르는 값이었다. 홈은 원시 문자열을 직접 비교해
+  /// 맞게 나와서 두 화면이 서로 다른 말을 했다.
+  submitted('done'),
 
   /// 링크 유효 기간이 지났다
   expired('expired');

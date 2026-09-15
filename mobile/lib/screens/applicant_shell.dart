@@ -3,7 +3,7 @@
 /// 담당자 셸([HomeShell])과 **완전히 다른 앱처럼** 돈다: 탭도, 상단 바 제목도,
 /// 부르는 API 도 겹치지 않는다. 지원자는 담당자 화면을 한 조각도 보면 안 된다.
 ///
-///   인적성 · 일정 · **홈** · 면접 · 더보기
+///   인적성 · 일정 · **홈** · 면접 · 내 정보
 ///
 /// 홈이 가운데인 이유는 담당자 셸과 같다 — 어디서든 돌아오는 자리고 엄지가
 /// 제일 편하다. 왼쪽은 "먼저 하는 것"(인적성 → 일정 조율), 오른쪽은 "그다음"
@@ -50,7 +50,10 @@ enum ApplicantTab implements NavTab {
   schedule(Icons.event_available_outlined, '일정', '면접 시간 조율'),
   home(Icons.home_outlined, '홈', '내 지원'),
   interview(Icons.videocam_outlined, '면접', 'AI 면접'),
-  more(Icons.menu, '더보기', '더보기');
+  // 2026-09-15 — '더보기' 를 '내 정보' 로. 이름·지원 현황·로그아웃이
+  // 들어 있어 내용이 정해진 탭인데, '더보기' 와 햄버거는 '여기 말고 더 있다' 는
+  // 뜻이라 무엇이 있는지 안 알려 준다.
+  more(Icons.person_outline, '내 정보', '내 정보');
 
   const ApplicantTab(this.icon, this.label, this.title);
 
@@ -154,24 +157,9 @@ class _ApplicantShellState extends State<ApplicantShell> {
     // 홈은 전부 보여 주므로 거기서 어느 지원인지 알 수 있다
     final app = me.primary;
 
-    /// 어느 것을 열 것인가.
-    ///
-    /// **아직 할 일이 남은 것 중 새 것을 먼저 고른다.** 2026-09-09 부터 서버가
-    /// 끝난 것(`done`)도 같이 내리는데(02-api.md), 재발급으로 여러 개가
-    /// 있으면 옛 것이 목록 앞에 온다(id 순). 앞에서부터 훑어 첫 번째 non-done
-    /// 을 잡으면 **새로 받은 방을 두고 옛 방(예: 어제 in_progress 로 남은
-    /// 세션)을 연다** — 채용자는 새 방에서 대기 중인데 앱은 옛 방에 붙어
-    /// 매칭이 안 되는 사고가 있었다. 뒤에서부터(=새 것부터) 훑는다.
-    ///
-    /// 다 끝났으면 마지막 것을 준다. 화면이 "완료" 라고 말할 수 있어야 한다 —
-    /// null 을 주면 "아직 없습니다" 가 되어 방금 마친 사람이 헷갈린다.
-    String? pick(List<TokenLink> links) {
-      if (links.isEmpty) return null;
-      for (final l in links.reversed) {
-        if (l.status != 'done') return l.token;
-      }
-      return links.last.token;
-    }
+    /// 규칙은 `pickLink`(models/applicant_me.dart) 한 곳에 있다 —
+    /// 홈도 같은 것을 쓴다. 여기서 따로 고르면 두 화면이 다른 세션을 본다.
+    String? pick(List<TokenLink> links) => pickLink(links)?.token;
 
     return switch (tab) {
       ApplicantTab.aptitude => AptitudeScreen(
