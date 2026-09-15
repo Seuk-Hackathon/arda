@@ -197,9 +197,15 @@ function ReadyBody(props: {
 function ConsentPanel({ busy, onAgree }: { busy: boolean; onAgree: () => void }) {
   return (
     <>
+      {/* AI 를 쓴다는 것을 지원자에게 알린다 — 질문·답변 정리에 AI, 카메라·마이크는
+          본인 확인과 기록, 표정·음성 분석은 참고 신호, 합격 여부는 사람. AI 이용정책
+          (고위험 용도: 고지 + 사람 검토)과 개인정보 동의가 요구하는 것이다. 앱
+          (interview_live_screen.dart) 과 같은 내용. */}
       <p className={styles.help}>
-        면접이 시작되면 <strong>카메라와 마이크가 켜집니다</strong>. 지원자님의 얼굴과
-        답변이 채용 검토 목적으로 저장됩니다. 다른 목적으로 사용되지 않습니다.
+        면접이 시작되면 <strong>카메라와 마이크가 켜집니다</strong>. 질문 생성과 답변 정리에
+        AI(아르)가 쓰이고, 담당자가 실시간으로 참여합니다. 카메라·마이크는 본인 확인과 답변
+        기록에 쓰이며, 표정·음성 분석은 참고 신호일 뿐입니다. <strong>합격 여부는 담당자가
+        직접 판단</strong>하고, 면접 내용은 채용 검토 목적으로만 활용됩니다.
       </p>
       <div className={styles.actions}>
         <button type="button" className="btn btn-primary" disabled={busy} onClick={onAgree}>

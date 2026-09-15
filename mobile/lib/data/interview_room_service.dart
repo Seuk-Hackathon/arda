@@ -73,7 +73,6 @@ class InterviewRoomService extends ChangeNotifier {
 
   RoomPhase _phase = RoomPhase.preparing;
   String? _errorMessage;
-  bool _muted = false;
 
   MediaStream? _localStream;
   MediaStream? _remoteStream;
@@ -89,7 +88,6 @@ class InterviewRoomService extends ChangeNotifier {
 
   RoomPhase get phase => _phase;
   String? get errorMessage => _errorMessage;
-  bool get muted => _muted;
   MediaStream? get localStream => _localStream;
   MediaStream? get remoteStream => _remoteStream;
 
@@ -109,23 +107,20 @@ class InterviewRoomService extends ChangeNotifier {
   Future<void> start() async {
     _alive = true;
 
-    // 1) 카메라와 마이크 둘 다 잡는다. 담당자가 지원자 목소리를 WebRTC 로
-    //    실시간으로 듣기 위해서다. **STT (record 파이프) 와 마이크를 나눠 쓰는
-    //    시도**: 대부분 안드로이드는 앱 안에서 AudioRecord 인스턴스가 하나뿐이지만,
-    //    flutter_webrtc 는 VOICE_COMMUNICATION 소스로, record 는 MIC 소스로 열어
-    //    조건이 맞는 기기·OS 에서 둘이 살아 있다. 안 살면 STT 가 조용히 꺼지고
-    //    담당자는 목소리만 듣는다 (반대는 반드시 살아 있어야 한다).
+    // 1) **카메라만** 잡는다. 마이크는 STT 파이프(`MicService` · record)가 혼자 연다.
+    //
+    //    09-09 ~ 09-14 까지는 여기서 마이크도 같이 잡았다(담당자가 목소리를 WebRTC
+    //    로 듣게). 그러면 앱 안에 AudioRecord 가 둘(WebRTC VOICE_COMMUNICATION +
+    //    record MIC)인데, 안드로이드는 이것을 보장하지 않는다 — 실기기(2026-09-15)
+    //    에서 둘이 겹쳐 뜨는 순간 native 크래시("앱에 버그가 있어 종료"), 안 겹치면
+    //    WebRTC 의 자동 이득이 바닥 소음을 끌어올려(서버 실측 바닥값 108 → 721)
+    //    서버가 잡음을 말로 세거나 말을 못 알아듣는다. 마이크 하나로 둔다.
+    //
+    //    담당자 쪽 목소리는 서버가 STT 용으로 받는 PCM 을 담당자 화면으로 흘려
+    //    주는 것으로 채운다(별도 작업) — 앱을 다시 만들지 않아도 된다.
     try {
       final stream = await navigator.mediaDevices.getUserMedia({
-        // 에코 캔슬링·잡음 억제·자동 이득을 **명시적으로** 켠다.
-        // flutter_webrtc 는 platform 에 따라 이 셋이 기본값이 아니라 하울링이
-        // 나는 사고가 있다 (2026-09-09 실기기: 담당자 목소리 → 폰 스피커 →
-        // 폰 마이크 → 다시 담당자에게 재순환).
-        'audio': {
-          'echoCancellation': true,
-          'noiseSuppression': true,
-          'autoGainControl': true,
-        },
+        'audio': false,
         'video': {
           'width': {'ideal': 1280},
           'height': {'ideal': 720},
@@ -176,17 +171,6 @@ class InterviewRoomService extends ChangeNotifier {
     );
 
     _pingTimer = Timer.periodic(_pingEvery, (_) => _send({'type': 'ping'}));
-  }
-
-  /// 마이크를 켜고 끈다. 영상은 끄지 않는다 — 얼굴이 안 보이면 면접이 아니다.
-  void toggleMute() {
-    final tracks = _localStream?.getAudioTracks() ?? const [];
-    final next = !_muted;
-    for (final t in tracks) {
-      t.enabled = !next;
-    }
-    _muted = next;
-    notifyListeners();
   }
 
   /// 사용자가 눌러 나간다. 서버에는 bye 를 먼저 보내고 닫는다 — 담당자가

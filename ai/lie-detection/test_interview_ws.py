@@ -385,6 +385,104 @@ class TestTranscribeFallback:
         assert len(tries) == 1
 
 
+class TestTranscribeViaApi:
+    """전사를 OpenAI API 로 한다 (2026-09-15, ADR-0038).
+
+    2 vCPU 서버에서 44초 발화가 180초 상한을 넘겨 자리표시자로 저장됐다(세션 75).
+    API 는 몇 초에 끝난다. **키가 없으면 밖으로 새지 않고**, API 가 죽으면 로컬로
+    물러선다 — 어느 쪽이든 면접은 끊기지 않는다.
+    """
+
+    @staticmethod
+    def _fake_post(calls, text="답변", fail=False):
+        def post(url, headers=None, data=None, files=None, timeout=None):
+            calls.append({"url": url, "headers": headers, "data": data, "files": files})
+            if fail:
+                raise RuntimeError("망 끊김")
+
+            class R:
+                def raise_for_status(self):
+                    pass
+
+                def json(self):
+                    return {"text": f" {text} "}
+
+            return R()
+
+        return post
+
+    def _api_on(self, monkeypatch):
+        monkeypatch.setattr(iw, "STT_BACKEND", "openai")
+        monkeypatch.setenv("OPENAI_API_KEY", "k")
+
+    def test_설정과_키가_있으면_API_로_전사한다(self, monkeypatch):
+        import httpx
+
+        calls = []
+        self._api_on(monkeypatch)
+        monkeypatch.setattr(iw, "STT_MODEL", "")
+        monkeypatch.setattr(httpx, "post", self._fake_post(calls))
+
+        assert iw.transcribe(LOUD * 40, "쿼리 튜닝은?") == "답변"
+
+        (c,) = calls
+        assert c["data"]["model"] == iw.OPENAI_STT_MODEL
+        assert c["data"]["language"] == "ko"
+        # 면접 질문 힌트 — 로컬의 initial_prompt 와 같은 자리
+        assert c["data"]["prompt"] == "쿼리 튜닝은?"
+        assert c["headers"]["Authorization"] == "Bearer k"
+        _name, body, mime = c["files"]["file"]
+        assert body[:4] == b"RIFF" and mime == "audio/wav"
+
+    def test_키가_없으면_API_로_새지_않는다(self, monkeypatch):
+        import httpx
+
+        calls = []
+        monkeypatch.setattr(iw, "STT_BACKEND", "openai")
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.setattr(iw, "STT_MODEL", "")
+        monkeypatch.setattr(httpx, "post", self._fake_post(calls))
+
+        assert iw.transcribe(LOUD * 40).startswith("[전사 꺼짐")
+        assert calls == []
+
+    def test_API_가_실패하면_로컬로_물러선다(self, monkeypatch):
+        import httpx
+
+        self._api_on(monkeypatch)
+        monkeypatch.setattr(httpx, "post", self._fake_post([], fail=True))
+        monkeypatch.setattr(iw, "STT_MODEL", "large-v3-turbo")
+        monkeypatch.setattr(iw, "_stt_model", lambda: object())
+        monkeypatch.setattr(iw, "_run_transcribe", lambda model, audio, hint="": "로컬 답")
+
+        assert iw.transcribe(LOUD * 40) == "로컬 답"
+
+    def test_API_가_실패하고_로컬이_없으면_자리표시자(self, monkeypatch):
+        import httpx
+
+        self._api_on(monkeypatch)
+        monkeypatch.setattr(httpx, "post", self._fake_post([], fail=True))
+        monkeypatch.setattr(iw, "STT_MODEL", "")
+
+        out = iw.transcribe(LOUD * 40)
+        # 빈 문자열이면 "말이 없었다" 로 읽혀 답변이 버려진다 — 자리표시자여야 한다
+        assert out.startswith("[전사 불가")
+
+    def test_이상입니다_확인도_API_로_한다(self, monkeypatch):
+        import httpx
+
+        self._api_on(monkeypatch)
+        monkeypatch.setattr(iw, "STT_MODEL", "")
+        monkeypatch.setattr(httpx, "post", self._fake_post([], text="네, 이상입니다."))
+
+        assert iw.says_done(LOUD * 40) is True
+
+    def test_WAV_머리를_붙인다(self):
+        wav = iw._pcm_to_wav(b"\x00\x01" * 16000)
+        assert wav[:4] == b"RIFF" and wav[8:12] == b"WAVE"
+        assert len(wav) == 44 + 32000
+
+
 class TestChunkSizeIndependence:
     """조각 크기가 달라도 판정이 같아야 한다.
 
