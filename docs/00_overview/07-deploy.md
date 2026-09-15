@@ -391,7 +391,15 @@ uv run python scripts/prefetch_models.py --stt
 
 **캐시 경로가 빌드와 런타임에서 같아야 의미가 있다.** 볼륨으로 덮어쓰면 구운 것이 가려진다 — `HF_HOME` 을 볼륨 밖에 두거나, 볼륨 쪽에 다시 받아라.
 
-## 실시간 면접 STT — CPU 프로덕션에서는 `int8` 이 정답 (2026-09-09 실측)
+## 실시간 면접 STT — 프로덕션 기본은 OpenAI API (2026-09-15, ADR-0038)
+
+`ai/lie-detection` 의 실시간 전사는 이제 backend/.env 의 **`STT_BACKEND=openai` + `OPENAI_API_KEY`** 를 읽어 API 로 전사한다(백엔드 업로드 답변과 같은 변수·같은 API). 근거는 2026-09-15 세션 75 실측: t3.large(2 vCPU) 에서 `large-v3-turbo` int8 이 **44초 발화를 180초 안에 못 끝내** `[전사 지연 · 발화 43.9초]` 가 저장됐고, 상한 시계가 줄 선 시간까지 세서 뒤 답변들까지 연쇄로 죽었다(얼굴 판정·"이상입니다" 확인 전사가 같은 2코어를 나눠 씀 · 컨테이너 CPU 115%). API 는 같은 발화가 몇 초다. 비용 분당 $0.006 — 10문항 면접 ≈ $0.06.
+
+- 값을 비우거나 `faster_whisper` 로 두면 아래 로컬 경로(`STT_MODEL`)로 돈다. 둘 다 켜 두면 API 실패 시 로컬로 물러선다.
+- 서버 `.env` 는 이미 `STT_BACKEND=openai` 라 코드 배포만으로 켜졌다. 되돌리려면 그 값을 비우고 `STT_MODEL=large-v3-turbo` 를 둔다.
+- 아래 int8 절은 **로컬 경로를 켤 때** 여전히 유효하다.
+
+## 실시간 면접 STT — CPU 로컬 전사를 켤 때는 `int8` 이 정답 (2026-09-09 실측)
 
 `ai/lie-detection` 의 실시간 전사(`interview_ws.py`)는 `STT_MODEL=large-v3-turbo` 만 넣으면 켜지지만, **`STT_COMPUTE_TYPE` 을 명시하지 않으면 CPU 에서 `float32` 로 잡혀 컨테이너를 죽인다.** dmesg OOM 5회 재현·로컬 벤치까지 근거가 남았다:
 

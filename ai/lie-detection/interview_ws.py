@@ -159,6 +159,69 @@ STT_BEAM_SIZE = int(os.getenv("STT_BEAM_SIZE", "1"))
 # `initial_prompt` 는 whisper 문맥의 절반(224 토큰)까지만 쓰이므로 여기서 자른다.
 STT_HINT_CHARS = int(os.getenv("STT_HINT_CHARS", "200"))
 
+# ── 전사를 어디서 하는가 (2026-09-15, ADR-0038) ───────────────────
+# 백엔드(`app/agent/stt.py`)와 **같은 변수**를 읽는다 — 이 컨테이너도 backend/.env 를
+# 통째로 받으므로 "오디오가 밖으로 나가는가" 는 한 곳에서 한 번만 정한다.
+#   openai         : OpenAI 전사 API. 2 vCPU 서버에서 44초 발화가 180초를 넘겨 자리표시자로
+#                    저장되던 것(세션 75 실측)이 API 로는 몇 초에 끝난다. 줄(`_stt_running`)에
+#                    서지 않는다 — CPU 를 안 쓰니 겹쳐 돌아도 서로 느려지지 않는다.
+#   faster_whisper : 로컬(위 STT_MODEL). GPU 가 있거나 오디오를 밖으로 못 보낼 때.
+# 값이 없거나 키가 없으면 로컬로 돈다 — 조용히 API 로 새지 않는다.
+# 로컬 모델(STT_MODEL)이 같이 켜져 있으면 API 실패 시 그쪽으로 물러선다.
+STT_BACKEND = os.getenv("STT_BACKEND", "").strip().lower()
+OPENAI_STT_MODEL = os.getenv("WHISPER_MODEL", "whisper-1").strip() or "whisper-1"
+OPENAI_STT_URL = os.getenv(
+    "OPENAI_STT_URL", "https://api.openai.com/v1/audio/transcriptions"
+)
+# API 한 번의 상한. 3분 발화도 API 는 십수 초라 넉넉히 둔다.
+OPENAI_STT_TIMEOUT_SEC = float(os.getenv("OPENAI_STT_TIMEOUT_SEC", "60"))
+
+
+def _api_key() -> str:
+    """키는 부를 때 읽는다 — 테스트가 환경변수를 바꿔 끼울 수 있게."""
+    return os.getenv("OPENAI_API_KEY", "").strip()
+
+
+def stt_via_api() -> bool:
+    """전사를 OpenAI API 로 하는가. 설정과 키가 **둘 다** 있어야 참이다."""
+    return STT_BACKEND == "openai" and bool(_api_key())
+
+
+def _pcm_to_wav(pcm: bytes) -> bytes:
+    """16kHz·16-bit·mono PCM 에 WAV 머리를 붙인다. API 는 날것 PCM 을 받지 않는다."""
+    import io
+    import wave
+
+    usable = len(pcm) - (len(pcm) % SAMPLE_WIDTH)
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(SAMPLE_WIDTH)
+        w.setframerate(SAMPLE_RATE)
+        w.writeframes(pcm[:usable])
+    return buf.getvalue()
+
+
+def _transcribe_openai(pcm: bytes, hint: str = "") -> str:
+    """OpenAI 전사 API. 실패하면 예외를 던진다 — 부르는 쪽이 로컬로 물러설지 정한다."""
+    import httpx
+
+    data = {"model": OPENAI_STT_MODEL, "response_format": "json"}
+    if STT_LANGUAGE:
+        data["language"] = STT_LANGUAGE
+    # 면접 질문 힌트. 로컬의 `initial_prompt` 와 같은 자리다.
+    if hint:
+        data["prompt"] = hint
+    r = httpx.post(
+        OPENAI_STT_URL,
+        headers={"Authorization": f"Bearer {_api_key()}"},
+        data=data,
+        files={"file": ("answer.wav", _pcm_to_wav(pcm), "audio/wav")},
+        timeout=OPENAI_STT_TIMEOUT_SEC,
+    )
+    r.raise_for_status()
+    return (r.json().get("text") or "").strip()
+
 
 def _rms(pcm: bytes) -> float:
     """조각의 소리 크기. `audioop` 은 Python 3.13 에서 빠졌고, numpy 로 같은 값을 낸다."""
@@ -974,8 +1037,12 @@ def warm_stt() -> None:
     **실패해도 서비스를 죽이지 않는다.** `model()`(판정 모델)은 없으면 뜰 때
     죽는 편이 낫지만, 전사는 없어도 면접이 돈다(자리표시자로 내려앉는다).
     """
+    if stt_via_api():
+        logger.info("전사: OpenAI API (%s)%s", OPENAI_STT_MODEL,
+                    " · 로컬 폴백 " + STT_MODEL if STT_MODEL else "")
     if not STT_MODEL:
-        logger.info("전사 꺼짐 — 예열하지 않는다")
+        if not stt_via_api():
+            logger.info("전사 꺼짐 — 예열하지 않는다")
         return
     started = time.monotonic()
     try:
@@ -1024,6 +1091,17 @@ def transcribe(pcm: bytes, hint: str = "") -> str:
     그 질문은 답한 것이 되어 다시 물어볼 길이 없어진다.
     """
     seconds = len(pcm) / (SAMPLE_RATE * SAMPLE_WIDTH)
+    if stt_via_api():
+        # 줄에 서지 않는다 — CPU 가 아니라 API 를 기다리는 것이라 겹쳐도 안 느려진다
+        try:
+            return _transcribe_openai(pcm, hint)
+        except Exception:
+            # 망·한도·5xx. 로컬 모델이 있으면 그쪽으로, 없으면 자리표시자 — 답변을
+            # 잃지 않는다. 빈 문자열은 "말이 없었다" 는 뜻이라 여기서 쓰지 않는다.
+            logger.exception("OpenAI 전사 실패 (발화 %.1f초)%s", seconds,
+                             " — 로컬로 물러선다" if STT_MODEL else "")
+            if not STT_MODEL:
+                return f"[전사 불가 · 발화 {seconds:.1f}초]"
     if not STT_MODEL:
         return f"[전사 꺼짐 · 발화 {seconds:.1f}초]"
 
@@ -1152,16 +1230,25 @@ def says_done(pcm: bytes) -> bool | None:
     CPU 로 1~2초이고, faster-whisper 는 동시 호출을 조각 단위로 번갈아 돌린다.
     질문 힌트(`initial_prompt`)는 주지 않는다 — 찾는 것은 정해진 한 마디다.
     """
-    if not STT_MODEL:
-        return None
-    model = _stt_model()
-    if model is None:
+    if not STT_MODEL and not stt_via_api():
         return None
     need = int(END_TAIL_SEC * SAMPLE_RATE) * SAMPLE_WIDTH
     tail = pcm[-need:]
     usable = len(tail) - (len(tail) % SAMPLE_WIDTH)
     if usable == 0:
         return False
+    if stt_via_api():
+        # 끝부분 몇 초라 API 로도 1초 안팎. 로컬 모델을 CPU 에 물고 있지 않아도 된다
+        try:
+            return ends_with_phrase(_transcribe_openai(tail[:usable]))
+        except Exception:
+            logger.exception("'이상입니다' API 확인 실패%s",
+                             " — 로컬로 물러선다" if STT_MODEL else " — 버튼·상한으로만 끝난다")
+            if not STT_MODEL:
+                return None
+    model = _stt_model()
+    if model is None:
+        return None
     audio = np.frombuffer(tail[:usable], dtype=np.int16).astype(np.float32) / 32768.0
     try:
         segments, _ = model.transcribe(
