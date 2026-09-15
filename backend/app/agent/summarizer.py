@@ -51,20 +51,30 @@ _STEP_SCHEMAS: dict[str, dict] = {
         },
         "required": ["insufficient", "gist", "key_skills", "key_experiences"],
     },
+    # chain_evaluate.v2 (ADR-0034) 의 출력 모양. **프롬프트와 같이 고친다** — 2026-09-15 까지
+    # v1 모양(fit_score 1~5)으로 남아 있었고, 스키마를 강제하는 백엔드(Ollama `format`)에서는
+    # 모델이 세 갈래 점수를 낼 수 없어 doc_score 가 fit_score×20 폴백(20점 단위)으로 떨어졌다.
+    # Claude 는 스키마를 무시해(anthropic_backend.supports_structured_output=False) 드러나지 않았다.
     "chain_evaluate": {
         "type": "object",
         "properties": {
-            "fit_score": {"type": "integer", "minimum": 1, "maximum": 5},
+            "requirements_score": {"type": "integer", "minimum": 0, "maximum": 100},
+            "preferred_score": {"type": "integer", "minimum": 0, "maximum": 100},
+            "culture_score": {"type": "integer", "minimum": 0, "maximum": 100},
             "fit": {
-                "type": "array", "maxItems": 2,
+                "type": "array", "maxItems": 3,
                 "items": {"type": "string", "maxLength": 40},
             },
             "concerns": {
-                "type": "array", "maxItems": 2,
+                "type": "array", "maxItems": 3,
                 "items": {"type": "string", "maxLength": 40},
             },
+            "evidence": {
+                "type": "array", "maxItems": 3,
+                "items": {"type": "string", "maxLength": 200},
+            },
         },
-        "required": ["fit_score", "fit", "concerns"],
+        "required": ["requirements_score", "preferred_score", "culture_score", "fit", "concerns"],
     },
     "chain_recommend": {
         "type": "object",
