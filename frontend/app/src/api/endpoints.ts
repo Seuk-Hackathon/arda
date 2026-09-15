@@ -8,6 +8,7 @@ import type {
   Publication,
   Note,
   Posting,
+  PostingStatus,
   Interview,
   ScheduleStatus,
   SearchResult,
@@ -88,6 +89,11 @@ export const postings = {
   list: (signal?: AbortSignal) => api.get<Posting[]>('/postings', { signal }),
 
   get: (id: number, signal?: AbortSignal) => api.get<Posting>(`/postings/${id}`, { signal }),
+
+  /* 상태·마감일만 바꾼다 — 공고 마감·다시 열기 (PATCH /postings/{id}, 02-api.md).
+     보낸 필드만 반영되고(exclude_unset) 응답은 바뀐 공고 전체다. 집계는 실리지 않는다 */
+  update: (id: number, body: { status?: PostingStatus; deadline?: string | null }) =>
+    api.patch<Posting>(`/postings/${id}`, body),
 }
 
 interface SearchQuery {
