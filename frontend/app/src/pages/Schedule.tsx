@@ -8,7 +8,17 @@ import styles from './Schedule.module.css'
 /* 지원자용 공개 페이지 (ADR-0016) — 로그인 없음, 메일 링크의 토큰이 곧 인증.
    응답 형태는 backend/app/schemas/schedule.py 의 SchedulePublicOut 이다.
    링크가 유효하면 화면 전체가 아르와의 대화(ArScheduleChat)이고, 일정 선택은
-   그 안의 카드다. 이 파일은 로딩·에러 상태와 API 호출만 맡는다. */
+   그 안의 카드다. 이 파일은 로딩·에러 상태와 API 호출만 맡는다.
+
+   `/schedule/:token`(메일 링크)과 `/my/schedule`(셸의 탭) 두 자리에서 같은
+   컴포넌트가 열린다 — Aptitude.tsx 의 같은 주석을 보라. */
+
+interface Props {
+  /* 셸이 열 때 넘겨주는 토큰. 없으면 주소에서 읽는다 (메일 링크) */
+  token?: string
+  /* 셸 안이면 자기 배경과 높이를 접는다 */
+  nested?: boolean
+}
 
 interface PublicSlot {
   id: number
@@ -33,8 +43,9 @@ type LoadState =
   | { kind: 'replaced' } /* 410 — 재제안으로 대체된 옛 링크 */
   | { kind: 'error'; message: string }
 
-export default function Schedule() {
-  const { token } = useParams<{ token: string }>()
+export default function Schedule({ token: given, nested = false }: Props = {}) {
+  const { token: fromUrl } = useParams<{ token: string }>()
+  const token = given ?? fromUrl
   const [state, setState] = useState<LoadState>({ kind: 'loading' })
   const [pending, setPending] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
@@ -85,6 +96,7 @@ export default function Schedule() {
     const d = state.data
     return (
       <ArScheduleChat
+        nested={nested}
         status={d.status}
         applicantName={d.applicant_name}
         postingTitle={d.posting_title}
@@ -100,9 +112,10 @@ export default function Schedule() {
   }
 
   return (
-    <div className={styles.page}>
+    <div className={`${styles.page} ${nested ? styles.nested : ''}`}>
       <main className={styles.column}>
-        <h1 className={styles.logo}><span className={styles.seed}>A</span>rda</h1>
+        {/* 셸 안에서는 로고를 그리지 않는다 — 상단 바에 이미 한 번 있다 */}
+        {!nested && <h1 className={styles.logo}><span className={styles.seed}>A</span>rda</h1>}
         {renderBody()}
       </main>
     </div>

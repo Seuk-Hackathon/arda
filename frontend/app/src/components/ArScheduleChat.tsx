@@ -25,6 +25,10 @@ interface Props {
   onConfirm: (slotId: number) => void
   /* FAQ 질문 → 답변. 부모가 토큰 알고 API 호출. 실패 시 예외를 던진다 */
   onAsk: (question: string) => Promise<string>
+  /* 지원자 셸(MyShell)의 탭으로 열렸는가 (2026-09-15). 자기 배경을 접고
+     높이를 상단 바만큼 뺀다 — 왼쪽 패널(아르·공고 정보)은 그대로 둔다.
+     이 화면의 성격이 거기 있어서다. 로고만 지운다 (상단 바에 이미 있다) */
+  nested?: boolean
 }
 
 interface Msg {
@@ -58,7 +62,7 @@ function fmtTime(iso: string): string {
 
 export default function ArScheduleChat({
   status, applicantName, postingTitle, expiresAt, slots, confirmedSlot,
-  pending, notice, onConfirm, onAsk,
+  pending, notice, onConfirm, onAsk, nested = false,
 }: Props) {
   const [picked, setPicked] = useState<number | null>(null)
   const [items, setItems] = useState<Msg[]>([])
@@ -200,7 +204,7 @@ export default function ArScheduleChat({
     ) : null
 
   return (
-    <div className={styles.page}>
+    <div className={`${styles.page} ${nested ? styles.nested : ''}`}>
       {/* 데스크톱 전용 왼쪽 패널 — 큰 아르 + 전형 정보. 모바일은 CSS 로 숨긴다 */}
       <aside className={styles.side}>
         <h1 className={styles.logo}><span className={styles.seed}>A</span>rda</h1>

@@ -29,7 +29,20 @@ import { AI_PHASE_LABEL, useAiInterview } from './useAiInterview'
    판정을 실시간으로 보여 주면 그 자체가 답변을 바꾼다. 훅도 그 값을 상태로
    들고 있지 않아, 화면이 그리려 해도 그릴 것이 없다.
 
-   폰 세로가 기본이다. */
+   폰 세로가 기본이다.
+
+   ## 두 자리에서 열린다 (2026-09-15)
+
+   `/interview/:token`·`/interview-ai/:token`(메일 링크)과 `/my/interview`
+   (지원자 셸의 탭). **화면은 한 벌이다** — Aptitude.tsx 의 같은 주석을 보라.
+   앱도 탭 안에서 면접을 본다(하단 탭이 그대로 남는다). */
+
+interface Props {
+  /* 셸이 열 때 넘겨주는 토큰. 없으면 주소에서 읽는다 (메일 링크) */
+  token?: string
+  /* 셸 안이면 자기 제목 띠와 100dvh 를 접는다 */
+  nested?: boolean
+}
 
 type LoadState =
   | { kind: 'loading' }
@@ -37,8 +50,9 @@ type LoadState =
   | { kind: 'invalid' }
   | { kind: 'error'; message: string }
 
-export default function InterviewAi() {
-  const { token } = useParams<{ token: string }>()
+export default function InterviewAi({ token: given, nested = false }: Props = {}) {
+  const { token: fromUrl } = useParams<{ token: string }>()
+  const token = given ?? fromUrl
   const [state, setState] = useState<LoadState>({ kind: 'loading' })
   const [started, setStarted] = useState(false)
   const [pending, setPending] = useState(false)
@@ -79,10 +93,13 @@ export default function InterviewAi() {
   }
 
   return (
-    <div className={styles.page}>
-      <header className={styles.topBar}>
-        <h1 className={styles.title}>AI 면접</h1>
-      </header>
+    <div className={`${styles.page} ${nested ? styles.nested : ''}`}>
+      {/* 셸 안에서는 제목 띠를 그리지 않는다 — 상단 바가 이미 「AI 면접」이다 */}
+      {!nested && (
+        <header className={styles.topBar}>
+          <h1 className={styles.title}>AI 면접</h1>
+        </header>
+      )}
 
       <div className={styles.body}>
         {state.kind === 'loading' && <Loading />}

@@ -384,3 +384,27 @@
   outline: 2px solid var(--accent-text);
   outline-offset: 1px;
 }
+
+/* 지원자 셸(MyShell) 안에서 열릴 때 (2026-09-15).
+
+   **높이를 놓지 않는다.** 이 화면은 대화라 안쪽이 스크롤되고 입력줄이 바닥에
+   붙어 있어야 하는데, `height: auto` 로 풀면 대화가 길어질수록 입력줄이 저
+   아래로 내려가 안 보인다. 100vh 에서 상단 바(64px)만 뺀다.
+
+   왼쪽 패널(아르·공고 정보)은 그대로 둔다 — 이 화면의 성격이 거기 있다.
+   로고만 지운다: 셸 상단 바에 이미 한 번 있다. */
+.page.nested {
+  height: calc(100dvh - 64px);
+  background: none;
+  padding: var(--sp-4) var(--sp-4) var(--sp-2);
+}
+
+.page.nested .logo {
+  display: none;
+}
+
+@media (min-width: 900px) {
+  .page.nested {
+    padding: var(--sp-5) var(--sp-5) var(--sp-6);
+  }
+}
