@@ -111,6 +111,14 @@ class DeviceMicService implements MicService {
           echoCancel: true,
           noiseSuppress: true,
           autoGain: true,
+          // **안드로이드 오디오 소스를 명시** (2026-09-15). flutter_webrtc 와 같은
+          // 화면에서 열릴 때 default 소스는 삼성 기기에서 시작 직후 두 번 close
+          // 당했다(logcat `PCM_RECORD stream was closed`) — `voiceCommunication`
+          // 소스는 WebRTC 와 같은 소스라 오디오 라우팅이 어긋나지 않고, 소스별
+          // 에코 캔슬링·잡음 억제가 커널 레벨에서도 적용된다.
+          androidConfig: AndroidRecordConfig(
+            audioSource: AndroidAudioSource.voiceCommunication,
+          ),
         ),
       );
     } on Exception catch (e) {
