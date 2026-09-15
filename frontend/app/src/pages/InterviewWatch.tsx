@@ -52,6 +52,7 @@ export default function InterviewWatch() {
   const [history, setHistory] = useState<Verdict[]>([])
   const [error, setError] = useState<string | null>(null)
   const [detail, setDetail] = useState<InterviewSessionDetail | null>(null)
+  const [copied, setCopied] = useState(false)
 
   const wsRef = useRef<WebSocket | null>(null)
   const aliveRef = useRef(true)
@@ -198,13 +199,32 @@ export default function InterviewWatch() {
               )}
             </>
           ) : (
-            <p className={styles.empty}>
-              {live
-                ? '지원자가 말하기 시작하면 여기에 나타납니다.'
-                : detail?.status === 'done'
-                  ? '끝난 면접입니다.'
-                  : '지원자가 면접에 들어와 말하기 시작하면 나타납니다.'}
-            </p>
+            <>
+              <p className={styles.empty}>
+                {live
+                  ? '지원자가 말하기 시작하면 여기에 나타납니다.'
+                  : detail?.status === 'done'
+                    ? '끝난 면접입니다.'
+                    : '지원자가 면접에 들어와 말하기 시작하면 나타납니다.'}
+              </p>
+              {!live && detail?.url && detail.status !== 'done' && (
+                <div className={styles.linkRow}>
+                  <code className={styles.link}>{detail.url}</code>
+                  <button
+                    type="button"
+                    className={styles.linkCopy}
+                    onClick={() => {
+                      navigator.clipboard.writeText(detail.url).then(() => {
+                        setCopied(true)
+                        window.setTimeout(() => setCopied(false), 2000)
+                      }).catch(() => {})
+                    }}
+                  >
+                    {copied ? '복사됨' : '링크 복사'}
+                  </button>
+                </div>
+              )}
+            </>
           )}
         </section>
 
