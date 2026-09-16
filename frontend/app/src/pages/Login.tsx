@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { ApiError, setApplicantToken } from '../api/client'
 import { applicantAuth } from '../api/endpoints'
@@ -49,6 +49,42 @@ export default function Login() {
 
   const stageRef = useRef<HTMLDivElement>(null)
   const sceneRef = useRef<SceneHandle | null>(null)
+
+  /* 심사자 자동 로그인 (박제 온프레미스 전용 · 2026-09-16).
+     URL 쿼리 `?demo=staff` → 담당자 자동 로그인, `?demo=applicant` → 지원자 자동 로그인.
+     심사자에게 이 URL 을 그대로 안내하면 별도 입력 없이 각 화면 진입. */
+  const demoTriggered = useRef(false)
+  useEffect(() => {
+    if (demoTriggered.current) return
+    const demo = new URLSearchParams(window.location.search).get('demo')
+    if (!demo) return
+    demoTriggered.current = true
+    if (demo === 'staff') {
+      (async () => {
+        try {
+          setPending(true)
+          await login('ssuvisdev@gmail.com', 'arda12!@')
+          navigate('/dashboard', { replace: true })
+        } catch (err) {
+          setError(err instanceof ApiError ? err.message : '자동 로그인 실패')
+          setPending(false)
+        }
+      })()
+    } else if (demo === 'applicant') {
+      (async () => {
+        try {
+          setRole('applicant')
+          setPending(true)
+          const res = await applicantAuth.login('demo-applicant@arda.local', '19980315')
+          setApplicantToken(res.access_token)
+          navigate('/my', { replace: true })
+        } catch (err) {
+          setError(err instanceof ApiError ? err.message : '자동 로그인 실패')
+          setPending(false)
+        }
+      })()
+    }
+  }, [login, navigate])
 
   /* 이미 로그인된 사용자가 /login 에 오면 폼을 또 보여주지 않는다.
      pending 중엔 제외 — login() 직후 setUser 가 먼저 돌면 handleSubmit 의
