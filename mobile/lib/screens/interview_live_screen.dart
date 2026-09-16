@@ -164,6 +164,11 @@ class _InterviewLiveScreenState extends State<InterviewLiveScreen> {
       setState(() => _info = info);
       if (info.status == InterviewStatus.inProgress) {
         await _startCall();
+      } else if (info.status == InterviewStatus.done ||
+          info.status == InterviewStatus.expired) {
+        // 끝났거나 만료됐다. **`pending` 은 여기 안 들어온다** — 아직 시작
+        // 전이라 놓을 것이 없고, 놓으면 방금 켠 화면꺼짐방지만 도로 끈다
+        await _releaseCall();
       }
     } on ApiError catch (e) {
       if (!mounted) return;
@@ -415,6 +420,9 @@ class _InterviewLiveScreenState extends State<InterviewLiveScreen> {
           _liveNote = null;
           _listening = false;
         });
+        // **여기서도 놓는다.** 질문을 다 답해서 서버가 닫는 이 길이 「면접 종료」
+        // 버튼보다 흔한데, 전에는 둘 다 카메라를 안 놓았다
+        _releaseCall().ignore();
         _load();
       case InterviewFailed(:final message, :final retryable):
         // 다시 붙어 볼 만하면 붙는다 — **제출 대기는 유지한다.** 전사 도중 소켓이
@@ -443,12 +451,50 @@ class _InterviewLiveScreenState extends State<InterviewLiveScreen> {
     setState(() {});
   }
 
+  /// 면접이 끝났다. **카메라와 소켓을 여기서 놓는다.**
+  ///
+  /// 전에는 놓는 코드가 [dispose] 에만 있었다. 그런데 지원자 셸이
+  /// [IndexedStack] 으로 탭을 살려 두므로 **이 화면은 앱이 살아 있는 한 dispose
+  /// 되지 않는다**([applicant_shell.dart] `_opened`). 그래서 「면접 종료」를
+  /// 누르고 「면접이 완료되었습니다」가 떠도 카메라 표시등이 계속 켜져 있었고,
+  /// 다른 탭으로 옮겨도 그대로였다. 앱을 죽여야 꺼졌다.
+  ///
+  /// 눈에 안 보이는 쪽이 더 나빴다: lie-detection 소켓도 안 닫혀 **서버가 끝난
+  /// 세션을 계속 판정했다.** 2026-09-16 실기기에서 면접을 끝낸 뒤에도
+  /// `/ai/health` 의 `live.scored` 가 10 초에 하나씩 계속 올랐다.
+  ///
+  /// **두 번 불러도 안전하다** — 이미 놓은 것은 건너뛴다.
+  Future<void> _releaseCall() async {
+    // **카메라를 먼저, 동기로 놓는다.** 뒤에 `await` 가 있으면 그 사이에
+    // [dispose] 가 렌더러를 닫을 수 있어, 깨어난 뒤 죽은 렌더러를 건드린다
+    _dropCall();
+    await _stopLive();
+  }
+
+  /// 카메라 쪽만 놓는다 — **동기다.** [dispose] 도 이것을 쓴다
+  void _dropCall() {
+    final service = _service;
+    _service = null;
+    if (service != null) {
+      service.removeListener(_onServiceChange);
+      service.dispose();
+    }
+    // 렌더러 자체는 살려 둔다(화면이 아직 떠 있다) — 물려 있던 그림만 뗀다
+    _localRenderer.srcObject = null;
+    _remoteRenderer.srcObject = null;
+    // 면접이 끝났으면 화면은 원래대로 꺼질 수 있어야 한다
+    WakelockPlus.disable().ignore();
+  }
+
   Future<void> _finish() async {
     final token = widget.token;
     if (token == null) return;
     setState(() => _sending = true);
     try {
       final done = await _portal.finish(token);
+      // **서버가 끝을 확인한 뒤에 놓는다.** 먼저 놓으면 finish 가 실패했을 때
+      // 카메라만 꺼지고 면접은 살아 있는 이상한 자리가 된다
+      await _releaseCall();
       if (!mounted) return;
       setState(() => _info = done);
     } on ApiError catch (e) {
@@ -461,13 +507,12 @@ class _InterviewLiveScreenState extends State<InterviewLiveScreen> {
 
   @override
   void dispose() {
+    // 동기로 놓을 것을 먼저 — 그래야 아래 렌더러 dispose 와 안 엇갈린다
+    _dropCall();
     _stopLive().ignore();
     _mic.dispose().ignore();
-    _service?.removeListener(_onServiceChange);
-    _service?.dispose();
     _localRenderer.dispose();
     _remoteRenderer.dispose();
-    WakelockPlus.disable().ignore();
     super.dispose();
   }
 
