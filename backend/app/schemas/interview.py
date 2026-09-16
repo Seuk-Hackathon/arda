@@ -109,6 +109,19 @@ class PacingHintOut(BaseModel):
     message: str
 
 
+class RetranscribeOut(BaseModel):
+    """다시 받아쓰기 결과 (2026-09-16).
+
+    **회차 번호로 돌려준다** — 담당자 화면이 "3·5번을 채웠고 7번은 음성이 없다"
+    까지 말할 수 있어야, 못 살린 답변을 지원자에게 다시 물을지 판단한다.
+    """
+
+    candidates: int  # 다시 시도한 회차 수 (음성이 남은 것만)
+    filled: list[int]  # 글이 채워진 회차 번호
+    failed: list[int]  # 음성은 있는데 이번에도 못 받아쓴 회차
+    no_audio: list[int]  # 음성 자체가 없어 되살릴 수 없는 회차
+
+
 class InterviewPublicOut(BaseModel):
     """지원자용. **토큰과 URL 을 되돌려주지 않는다** — 이미 가진 사람만 본다.
 

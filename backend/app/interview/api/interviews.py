@@ -46,6 +46,7 @@ from app.schemas.interview import (
     InterviewPublicOut,
     PacingHintOut,
     QuestionsSet,
+    RetranscribeOut,
     SessionCreate,
     SessionDetailOut,
     SessionOut,
@@ -96,6 +97,8 @@ def _to_out(session: InterviewSession) -> SessionOut:
 from app.interview.session_service import (
     LATE_ANSWER_GRACE,
     generate_followup_bg as _generate_followup_bg,
+    remember_audio_key as _remember_audio_key,
+    retranscribe_session as _retranscribe_session,
     seed_questions_bg as _seed_questions_bg,
     transcribe_answer as _transcribe_answer,
 )
@@ -217,6 +220,52 @@ def delete_session(
         code="session_deleted",
         message="이 면접 세션이 삭제됐습니다. 목록에서 새 세션을 만들어 주세요",
     )
+
+
+@router.post(
+    "/interview-sessions/{session_id}/retranscribe", response_model=RetranscribeOut
+)
+def retranscribe_answers(
+    session_id: int,
+    background: BackgroundTasks,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """답이 비어 있거나 `[전사 …]` 로 남은 회차를 음성으로 다시 채운다. **담당자용.**
+
+    2026-09-15 세션 75 에서 전사가 상한(180초)을 넘겨 답변이 `[전사 지연 · 발화
+    43.9초]` 로 저장됐다. 지원자는 화면이 안 넘어가니 [답변 완료] 를 연타했고 뒤
+    문항까지 빈 답변으로 소진됐다 ([ADR-0038](../../../docs/03_decision/0038-실시간-전사-OpenAI-API.md)).
+    **전사 속도는 그 ADR 로 풀렸지만 이미 빈 채로 남은 답변을 되살릴 길이 없었다.**
+    이 경로가 그 길이다.
+
+    **멀쩡한 답변은 건드리지 않는다** — 몇 번을 눌러도 안전하고, 실패한 회차만
+    다시 시도한다. 되살릴 수 있는 것은 음성이 S3 에 남은 회차뿐이라 그렇지 않은
+    회차는 `no_audio` 로 그대로 돌려준다 (실시간 소켓 경로가 그렇다).
+
+    하나라도 채워지면 **채점과 서류 대조를 다시 돌린다** — 빈 답변으로 매긴 점수가
+    그대로 남으면 담당자가 그 점수를 보고 판단한다.
+    """
+    session = db.get(InterviewSession, session_id)
+    if session is None:
+        raise HTTPException(HTTPStatus.NOT_FOUND, "면접 세션을 찾을 수 없습니다")
+
+    result = _retranscribe_session(db, session_id)
+
+    if result["filled"]:
+        from app.agent.interview_findings import generate_turn_findings_bg
+        from app.interview.scoring import score_interview_bg
+
+        background.add_task(score_interview_bg, session.id)
+        for turn in db.scalars(
+            select(InterviewTurn).where(
+                InterviewTurn.session_id == session.id,
+                InterviewTurn.seq.in_(result["filled"]),
+            )
+        ).all():
+            background.add_task(generate_turn_findings_bg, session.id, turn.id)
+
+    return RetranscribeOut(**result)
 
 
 @router.post("/interview-turns/{turn_id}/analyze")
@@ -629,6 +678,10 @@ def submit_answer(
     ]
 
     if body.audio_s3_key is not None:
+        # 전사 **전에** 키를 박아 둔다 (2026-09-16). 전사가 실패하면 이 요청의
+        # 변경은 전부 사라지는데, 그러면 S3 에 음성이 있어도 어느 회차의 것인지
+        # 아무도 모른다 — 나중에 다시 받아쓸 수가 없다.
+        _remember_audio_key(db, turn, body.audio_s3_key)
         transcript = _transcribe_answer(turn, body.audio_s3_key)
     else:
         transcript = body.transcript
