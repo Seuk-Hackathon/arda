@@ -1,0 +1,173 @@
+"""메일 SMTP 폴백 — n8n 이 멈춰도 통보가 나간다 (2026-09-16).
+
+발송 경로가 **n8n 하나뿐**이라 그것이 멈추면 합격·불합격 통보가 통째로 멎는다.
+그 사실이 드러나는 것은 지원자가 "연락이 없다" 고 말할 때다
+([ADR-0031](../../docs/03_decision/0031-aws-최소화.md) 의 "워커는 SMTP 20줄 비상
+폴백만" · [ADR-0036](../../docs/03_decision/0036-SQS-워커-폐기.md) 후속).
+
+**실제 SMTP 는 부르지 않는다** — `send_message` 를 mock 한다.
+"""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime, timedelta
+from unittest.mock import patch
+
+import pytest
+from sqlalchemy.orm import Session
+
+from app.models import Application, EmailLog, JobPosting, User
+from app.shared import mail, mail_smtp
+
+
+@pytest.fixture()
+def log(db: Session, admin_user: User) -> EmailLog:
+    posting = JobPosting(
+        title="공고", description="본문", status="open", created_by=admin_user.id
+    )
+    db.add(posting)
+    db.flush()
+    application = Application(
+        job_posting_id=posting.id,
+        name="지원자정",
+        email="fallback@test.local",
+        phone="010-0000-0000",
+        privacy_agreed_at=datetime.now(UTC),
+    )
+    db.add(application)
+    db.flush()
+    row = EmailLog(
+        application_id=application.id,
+        to_email=application.email,
+        stage="applied",
+        status="queued",
+        actor_kind="system",
+    )
+    db.add(row)
+    db.commit()
+    return row
+
+
+@pytest.fixture()
+def smtp_on(monkeypatch):
+    monkeypatch.setattr(mail_smtp, "SMTP_HOST", "smtp.test.local")
+    monkeypatch.setattr(mail_smtp, "SMTP_USER", "bot@test.local")
+    monkeypatch.setattr(mail_smtp, "SMTP_PASSWORD", "pw")
+
+
+class TestSendLog:
+    def test_보내면_sent_로_남는다(self, db: Session, log: EmailLog, smtp_on):
+        with patch("app.shared.mail_smtp.send_message") as sent:
+            assert mail_smtp.send_log(db, log) is True
+
+        sent.assert_called_once()
+        assert log.status == "sent"
+        assert log.sent_at is not None
+
+    def test_폴백으로_나간_것을_구별할_수_있다(self, db: Session, log: EmailLog, smtp_on):
+        """`provider_message_id` 가 빈 `sent` 행이 곧 "폴백으로 나갔다" 는 표시다."""
+        with patch("app.shared.mail_smtp.send_message"):
+            mail_smtp.send_log(db, log)
+
+        assert log.provider_message_id is None
+
+    def test_이미_보낸_행은_다시_안_보낸다(self, db: Session, log: EmailLog, smtp_on):
+        """두 번째 사본이 가면 지원자는 같은 통보를 두 번 받는다."""
+        log.status = "sent"
+        db.commit()
+
+        with patch("app.shared.mail_smtp.send_message") as sent:
+            assert mail_smtp.send_log(db, log) is False
+        sent.assert_not_called()
+
+    def test_실패하면_재시도_횟수만_올리고_queued_로_둔다(
+        self, db: Session, log: EmailLog, smtp_on
+    ):
+        with patch(
+            "app.shared.mail_smtp.send_message", side_effect=RuntimeError("SMTP 죽음")
+        ):
+            assert mail_smtp.send_log(db, log) is False
+
+        assert log.status == "queued", "실패를 sent 로 적으면 영영 안 보낸다"
+        assert log.retry_count == 1
+
+
+class TestFlushPending:
+    """n8n 이 웹훅은 받고(200) 그 뒤 죽으면 행이 `queued` 로 남는다 — 발행 시점에는
+    성공으로 보여 폴백이 안 걸린다. 그래서 나중에 훑는 경로가 따로 필요하다."""
+
+    def test_오래_묵은_것만_보낸다(self, db: Session, log: EmailLog, smtp_on):
+        log.created_at = datetime.now(UTC) - timedelta(minutes=30)
+        db.commit()
+
+        with patch("app.shared.mail_smtp.send_message"):
+            result = mail_smtp.flush_pending(db, after_min=10)
+
+        assert result == {"found": 1, "sent": 1}
+        assert log.status == "sent"
+
+    def test_방금_생긴_것은_건드리지_않는다(self, db: Session, log: EmailLog, smtp_on):
+        """n8n 이 정상이면 몇 초 안에 나간다 — 그 사이에 끼어들면 두 번 간다."""
+        with patch("app.shared.mail_smtp.send_message") as sent:
+            result = mail_smtp.flush_pending(db, after_min=10)
+
+        assert result["found"] == 0
+        sent.assert_not_called()
+
+    def test_failed_는_되살리지_않는다(self, db: Session, log: EmailLog, smtp_on):
+        """상한을 넘겨 접은 건이다 — 되살리려면 사람이 보고 판단해야 한다."""
+        log.status = "failed"
+        log.created_at = datetime.now(UTC) - timedelta(hours=2)
+        db.commit()
+
+        with patch("app.shared.mail_smtp.send_message") as sent:
+            assert mail_smtp.flush_pending(db, after_min=10)["found"] == 0
+        sent.assert_not_called()
+
+
+class TestPublishFallback:
+    """`mail.publish` 가 n8n 에 못 실으면 SMTP 로 물러선다."""
+
+    class _Broken:
+        def publish(self, email_log_id: int) -> None:
+            raise RuntimeError("n8n 죽음")
+
+    def test_n8n_이_죽으면_SMTP_로_보낸다(self, smtp_on):
+        with patch("app.shared.mail_smtp.send_log_id", return_value=True) as fb:
+            mail.publish(7, dispatcher=self._Broken())
+        fb.assert_called_once_with(7)
+
+    def test_SMTP_설정이_없으면_예외를_올린다(self, monkeypatch):
+        """설정이 없는데 **조용히 다른 데로 보내지 않는다.** 호출부가 알아야 한다."""
+        monkeypatch.setattr(mail_smtp, "SMTP_HOST", "")
+
+        with pytest.raises(RuntimeError):
+            mail.publish(7, dispatcher=self._Broken())
+
+    def test_폴백마저_실패하면_예외를_올린다(self, smtp_on):
+        with patch("app.shared.mail_smtp.send_log_id", return_value=False):
+            with pytest.raises(RuntimeError):
+                mail.publish(7, dispatcher=self._Broken())
+
+    def test_이미_SMTP_경로면_다시_안_부른다(self, smtp_on):
+        """폴백이 자기 자신을 또 부르면 실패가 두 번 난다."""
+        from app.adapter.outbound.mail import SmtpMailDispatcher
+
+        with patch(
+            "app.shared.mail_smtp.send_log_id", side_effect=RuntimeError("SMTP 죽음")
+        ) as fb:
+            with pytest.raises(RuntimeError):
+                mail.publish(7, dispatcher=SmtpMailDispatcher())
+        assert fb.call_count == 1
+
+
+class TestSwitch:
+    def test_smtp_env_uses_smtp_dispatcher(self, monkeypatch):
+        from app.adapter.outbound.mail import SmtpMailDispatcher
+
+        monkeypatch.setenv("MAIL_DISPATCH", "smtp")
+        assert isinstance(mail._get_dispatcher(), SmtpMailDispatcher)
+
+    def test_설정이_없으면_폴백은_꺼진_것으로_본다(self, monkeypatch):
+        monkeypatch.setattr(mail_smtp, "SMTP_HOST", "")
+        assert mail_smtp.available() is False
