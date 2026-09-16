@@ -1,4 +1,19 @@
 http://arda-api.suvisdev.cloud, http://localhost {
+	# 박제 온프레미스 (2026-09-16): CORS preflight (OPTIONS) 을 Caddy 가 즉시 응답.
+	# 백엔드 api 컨테이너가 재시작 중이라도 preflight 은 항상 200 이 되어야
+	# 브라우저가 실패 응답을 캐시하지 않는다. 심사자 접근 안정성 확보.
+	@options method OPTIONS
+	handle @options {
+		header {
+			Access-Control-Allow-Origin "https://arda.suvisdev.cloud"
+			Access-Control-Allow-Methods "GET, POST, PATCH, PUT, DELETE, OPTIONS"
+			Access-Control-Allow-Headers "Authorization, Content-Type, Accept, Accept-Language, Content-Language"
+			Access-Control-Max-Age "0"
+			Vary "Origin"
+		}
+		respond 204
+	}
+
 	handle_path /demo/* {
 		root * /srv/demo
 		file_server
