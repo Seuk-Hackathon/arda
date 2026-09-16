@@ -129,6 +129,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
       // 05-design §3: 화면 여백은 --sp-4
       padding: const EdgeInsets.all(AppSpace.s4),
       children: [
+        // ① 인사 · ② 오늘 한 장 (2026-09-15).
+        //
+        // 그 전에는 카드가 바로 시작했고, 오늘이 0건이면 첫 카드가 제목과
+        // 링크만 남아 **화면이 통째로 비었다**(실기기에서 확인). 면접이 없는
+        // 날은 드문 일이 아니라 **기본 상태**에 가깝다 — 거기에 맞춰 그린다.
+        _Greeting(name: CurrentUserScope.of(context)?.name ?? '', day: day),
+        const SizedBox(height: AppSpace.s4),
+        _TodayHero(
+          today: interviews,
+          week: data.weekInterviews,
+          onOpenCalendar: widget.onOpenCalendar,
+        ),
+        const SizedBox(height: AppSpace.s3),
+
         _Card(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -371,6 +385,283 @@ class _StatCell extends StatelessWidget {
 /// §9: 터치 타깃 최소 44×44 — 글자 높이는 20 남짓이라 누를 자리를 44 로 넓힌다.
 /// 좌우 여백은 두지 않는다 — 글자 오른쪽 끝이 카드 안쪽 선에 맞아야 위의
 /// 날짜·건수와 같은 세로선에 선다.
+/// 인사 — 이름이 카드 위가 아니라 화면의 머리다 (2026-09-15).
+///
+/// 지원자 홈(applicant_summary_screen.dart `_Greeting`)이 2026-09-15 개편에서
+/// 같은 자리를 가졌다. 담당자 홈만 카드부터 시작하면 **같은 앱인데 성격이 둘**이
+/// 된다. 같은 언어를 쓴다.
+class _Greeting extends StatelessWidget {
+  const _Greeting({required this.name, required this.day});
+
+  final String name;
+  final DateTime day;
+
+  /// 시간대로 인사를 고른다. 기계가 하루를 아는 티를 내는 한 줄이다
+  static String hello(int hour) {
+    if (hour < 6) return '늦은 시간이네요';
+    if (hour < 12) return '좋은 아침이에요';
+    if (hour < 18) return '좋은 오후예요';
+    return '좋은 저녁이에요';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          hello(day.hour),
+          style: const TextStyle(
+            fontFamily: AppType.fontFamily,
+            fontSize: AppType.sm,
+            color: AppColors.textSub,
+          ),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          '$name 님',
+          style: const TextStyle(
+            fontFamily: AppType.fontFamily,
+            fontSize: 24,
+            fontWeight: FontWeight.w800,
+            letterSpacing: -0.5,
+            color: AppColors.text,
+            shadows: AppTextShadow.heading,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          '${formatDate(day)} (${_weekday(day)})',
+          style: const TextStyle(
+            fontFamily: AppType.fontFamily,
+            fontSize: AppType.caption,
+            fontFeatures: AppType.tabularNums,
+            color: AppColors.textSub,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+const _weekdays = ['월', '화', '수', '목', '금', '토', '일'];
+
+String _weekday(DateTime d) => _weekdays[d.weekday - 1];
+
+/// 오늘 한 장 — 화면에서 제일 큰 카드.
+///
+/// **오늘이 0건이어도 빈 카드가 되지 않는다.** 그 전에는 「오늘 면접」 카드가
+/// 제목과 「캘린더 →」만 남아 화면이 통째로 비었다(2026-09-15 실기기). 면접이
+/// 없는 날이 드문 일이 아니므로 **없는 것도 말이 되게** 그린다.
+///
+/// 그라데이션은 지원자 홈의 급한 일 카드(`_NowCard`)와 같은 규격이다 — 두
+/// 화면이 한 벌로 읽힌다. §1 이 허용하는 쓰임이다: 판단 색(연두·적갈)이 아니라
+/// `--accent` 계열 워시다.
+class _TodayHero extends StatelessWidget {
+  const _TodayHero({
+    required this.today,
+    required this.week,
+    required this.onOpenCalendar,
+  });
+
+  /// 오늘 확정된 면접
+  final List<Interview> today;
+
+  /// 그 주 전체. 오늘이 비었을 때 할 말이 여기서 나온다
+  final List<Interview> week;
+
+  final VoidCallback? onOpenCalendar;
+
+  /// 지금 이후로 가장 가까운 면접. 이번 주에 없으면 null
+  Interview? get _next {
+    final now = DateTime.now();
+    final later = [for (final i in week) if (i.startAt.isAfter(now)) i]
+      ..sort((a, b) => a.startAt.compareTo(b.startAt));
+    return later.isEmpty ? null : later.first;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final hasToday = today.isNotEmpty;
+    final lead = _next;
+
+    return Container(
+      padding: const EdgeInsets.all(AppSpace.s4),
+      decoration: BoxDecoration(
+        borderRadius: const BorderRadius.all(Radius.circular(20)),
+        border: Border.all(
+          color: const Color(0x4322D3EE),
+          width: AppShape.borderW,
+        ),
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0x2922D3EE), Color(0x2160A5FA), Color(0x1EA78BFA)],
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            '오늘',
+            style: TextStyle(
+              fontFamily: AppType.fontFamily,
+              fontSize: 11,
+              fontWeight: AppType.wSemiBold,
+              letterSpacing: 0.6,
+              color: AppColors.accentText,
+            ),
+          ),
+          const SizedBox(height: AppSpace.s1),
+          Text(
+            hasToday
+                ? '면접 ${today.length}건이 있어요'
+                : '면접이 없는 날이에요',
+            style: const TextStyle(
+              fontFamily: AppType.fontFamily,
+              fontSize: 22,
+              fontWeight: FontWeight.w800,
+              letterSpacing: -0.4,
+              color: AppColors.text,
+              shadows: AppTextShadow.heading,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            _sub(hasToday),
+            style: const TextStyle(
+              fontFamily: AppType.fontFamily,
+              fontSize: AppType.sm,
+              height: 1.5,
+              color: AppColors.textSub,
+            ),
+          ),
+          // **오늘 것이 있으면 줄을 안 그린다.** 바로 아래 「오늘 면접」 카드가
+          // 같은 면접을 이미 줄줄이 적는다 — 첫 줄만 여기에 한 번 더 쓰면
+          // 같은 정보가 두 번 나온다. 이 줄의 쓸모는 **오늘이 비었을 때**
+          // '그럼 다음은 언제' 를 말하는 데 있다
+          if (!hasToday && lead != null) ...[
+            const SizedBox(height: AppSpace.s3),
+            const Divider(height: 1, color: Color(0x1AFFFFFF)),
+            const SizedBox(height: AppSpace.s3),
+            _LeadRow(
+              interview: lead,
+              sameDay: hasToday,
+              onOpen: onOpenCalendar,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// 둘째 줄. **없을 때도 다음에 무엇이 오는지 말한다** — 안 적으면 화면이
+  /// "비었다"만 말하고 끝난다
+  String _sub(bool hasToday) {
+    if (hasToday) {
+      return week.length > today.length
+          ? '이번 주에는 모두 ${formatItemCount(week.length)}이에요.'
+          : '이번 주 면접은 오늘이 전부예요.';
+    }
+    if (week.isEmpty) return '이번 주에는 잡힌 면접이 없어요.';
+    return '이번 주에 ${formatItemCount(week.length)}이 잡혀 있어요. 가장 가까운 건 —';
+  }
+}
+
+/// 히어로 아래 한 줄 — 시각 · 지원자 · 공고 · 캘린더로 가는 문.
+///
+/// **이 화면에서 채운 버튼은 이것 하나다.** 2026-09-15 까지 그 자리는
+/// 「평가하러 가기」였다(평가 현황과 함께 없어졌다). §1: 주 동작 버튼은 흰 판.
+class _LeadRow extends StatelessWidget {
+  const _LeadRow({
+    required this.interview,
+    required this.sameDay,
+    this.onOpen,
+  });
+
+  final Interview interview;
+
+  /// 오늘 것인가. 아니면 날짜를 같이 적는다
+  final bool sameDay;
+
+  final VoidCallback? onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    final at = interview.startAt;
+    final when = sameDay
+        ? formatTime(at)
+        : '${at.month}/${at.day} ${formatTime(at)}';
+
+    return Row(
+      children: [
+        Text(
+          when,
+          style: const TextStyle(
+            fontFamily: AppType.fontFamily,
+            fontSize: AppType.sm,
+            fontFeatures: AppType.tabularNums,
+            color: AppColors.accentText,
+          ),
+        ),
+        const SizedBox(width: AppSpace.s3),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                interview.applicantName,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontFamily: AppType.fontFamily,
+                  fontSize: AppType.sm,
+                  fontWeight: AppType.wSemiBold,
+                  color: AppColors.text,
+                ),
+              ),
+              Text(
+                interview.postingTitle,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontFamily: AppType.fontFamily,
+                  fontSize: 11,
+                  color: AppColors.textSub,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: AppSpace.s2),
+        Material(
+          color: AppColors.accentFill,
+          borderRadius: const BorderRadius.all(Radius.circular(12)),
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: onOpen,
+            child: Container(
+              // §9 터치 타깃
+              constraints: const BoxConstraints(minHeight: 40),
+              padding: const EdgeInsets.symmetric(horizontal: AppSpace.s4),
+              alignment: Alignment.center,
+              child: const Text(
+                '캘린더',
+                style: TextStyle(
+                  fontFamily: AppType.fontFamily,
+                  fontSize: AppType.caption,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.onAccent,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class _CardLink extends StatelessWidget {
   const _CardLink({required this.label, this.onTap});
 
@@ -419,6 +710,12 @@ class _CardLink extends StatelessWidget {
 ///
 /// 높이는 내용이 정한다 — 조각 3~4 동안 잡아 뒀던 잠정 높이(200)는 면접 행이
 /// 들어오면서 걷어냈다.
+/// 카드를 테스트가 집을 손잡이. **'화면 안의 첫 Container' 로는 못 집는다** —
+/// 2026-09-15 에 그 자리를 히어로가 차지하면서 카드 규격 테스트가 히어로를
+/// 보고 있었다(radius·padding 이 다르다). 이 저장소가 이미 쓰는 방식이다
+/// (reviewCountKey · weekStripKey · dayCellKey)
+const dashboardCardKey = Key('dashboard-card');
+
 class _Card extends StatelessWidget {
   const _Card({required this.child});
 
@@ -427,6 +724,7 @@ class _Card extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
+      key: dashboardCardKey,
       padding: const EdgeInsets.all(AppSpace.s4),
       decoration: BoxDecoration(
         color: AppColors.bgElev,
@@ -494,6 +792,10 @@ class _CardHead extends StatelessWidget {
 ///
 /// 시각이 맨 앞이다. 이 카드를 보는 이유가 "몇 시에 누구"라서 시간표처럼 읽혀야 한다.
 /// 면접관은 넣지 않는다 — 05-design 이 면접관 컬럼을 두는 곳은 캘린더의 그날 목록이다.
+/// 면접 행을 테스트가 집을 손잡이. **위치 번호(`Container.at(1)`)로는 못 집는다** —
+/// 2026-09-15 에 히어로가 생기면서 번호가 밀렸다. 카드 키와 같은 이유다
+const interviewRowKey = Key('dashboard-interview-row');
+
 class _InterviewRow extends StatelessWidget {
   const _InterviewRow(this.interview);
 
@@ -505,6 +807,7 @@ class _InterviewRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
+      key: interviewRowKey,
       // 머리·앞 행과 나누는 실선. 카드 테두리(--border)보다 옅은 --border-soft 다
       decoration: const BoxDecoration(
         border: Border(

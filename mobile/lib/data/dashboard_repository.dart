@@ -18,12 +18,20 @@ import 'schedule_repository.dart';
 class DashboardData {
   const DashboardData({
     required this.todayInterviews,
+    required this.weekInterviews,
     required this.openPostings,
     required this.stageCounts,
   });
 
   /// 오늘 확정된 면접
   final List<Interview> todayInterviews;
+
+  /// **그 주 전체**(일요일~토요일)의 확정 면접. 오늘 것도 들어 있다.
+  ///
+  /// 2026-09-15 에 더했다. 홈 히어로가 오늘이 0건일 때 「이번 주에 N건」과
+  /// 「가장 가까운 면접」을 말하는데, 그 둘이 여기서 나온다. **호출은 안 늘었다**
+  /// — 오늘 하루를 묻던 것을 한 주로 넓힌 것뿐이다(캘린더가 이미 그렇게 쓴다).
+  final List<Interview> weekInterviews;
 
   /// 진행중 공고 + 그 공고의 단계별 인원
   final List<PostingWithCounts> openPostings;
@@ -68,11 +76,23 @@ class DashboardRepository {
 
     // 둘을 동시에 던진다. 순서대로 기다릴 이유가 없다.
     // 2026-09-15 까지 셋이었다 — `GET /interviewers/{me}/applications`(내 리뷰
-    // 대기 수)가 있었는데, 평가 현황을 지우면서 그 숫자도 갈 데가 없어졌다
-    final (interviews, postings) = await (
-      _schedules.between(day, day),
+    // 대기 수)가 있었는데, 평가 현황을 지우면서 그 숫자도 갈 데가 없어졌다.
+    //
+    // **하루가 아니라 그 주를 받는다** (2026-09-15). 홈 히어로가 「이번 주 N건」과
+    // 「가장 가까운 면접」을 말해야 하는데, 하루치만 받으면 오늘이 0건일 때
+    // 할 말이 없다. 캘린더가 이미 같은 단위로 부르고 있어 새 경로가 아니다.
+    final (week, postings) = await (
+      _schedules.week(day),
       _postings.list(),
     ).wait;
+
+    // 파라미터 `today` 와 이름이 겹치지 않게 `dayOnly`
+    final dayOnly = DateTime(day.year, day.month, day.day);
+    final interviews = [
+      for (final i in week)
+        if (DateTime(i.startAt.year, i.startAt.month, i.startAt.day) == dayOnly)
+          i,
+    ];
 
     final open = [
       for (final p in postings)
@@ -89,6 +109,7 @@ class DashboardRepository {
 
     return DashboardData(
       todayInterviews: interviews,
+      weekInterviews: week,
       openPostings: open,
       stageCounts: counts,
     );

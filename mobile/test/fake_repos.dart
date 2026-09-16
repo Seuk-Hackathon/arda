@@ -459,6 +459,10 @@ class FakeDashboardRepository implements DashboardRepository {
 
     return DashboardData(
       todayInterviews: mockInterviewsOn(day),
+      // 홈 히어로가 '이번 주 N건'·'가장 가까운 면접'을 여기서 읽는다
+      weekInterviews: [
+        for (final list in mockInterviewsInWeek(day).values) ...list,
+      ],
       openPostings: open,
       stageCounts: mockOpenStageCounts,
     );
