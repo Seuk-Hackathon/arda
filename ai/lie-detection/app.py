@@ -424,6 +424,18 @@ async def _on_binary(ws, client, session: InterviewSession, data: bytes) -> None
     if kind != KIND_AUDIO:
         return
 
+    # **끝난 면접은 더 듣지 않는다** (2026-09-16, 앱 오너 보고). 지원자 쪽이 소켓을
+    # 안 닫으면 — 앱이 「면접 종료」 뒤에도 마이크를 놓지 않거나, 웹 탭을 그냥
+    # 열어 두면 — 서버가 끝난 세션을 계속 판정한다. 실측에서 `scored` 가 10초에
+    # 하나씩 올랐고 그 전부가 `no_face` 라 통계까지 흐려졌다.
+    #
+    # **소켓만 믿지 않는다.** 지원자 화면이 종료를 백엔드로 직접 보내는 경로도
+    # 있어서(면접 종료 버튼), 이쪽은 아무 통지를 못 받는다. 그래서 주기적으로
+    # 백엔드에 상태를 물어 스스로 닫는다.
+    if session.done:
+        return
+    _schedule_done_check(client, session)
+
     event = session.add_audio(payload)
 
     # 말하는 동안 판정을 굴려 담당자에게 민다. 답변이 끝날 때까지 기다리지 않는다 —
@@ -622,7 +634,58 @@ async def _close(ws, client, session: InterviewSession) -> None:
         await finish_interview(client, session.token)
     except Exception:
         logger.exception("면접 종료 처리 실패: token=%s", session.token[:8])
+    # **여기서부터는 더 듣지 않는다** (2026-09-16). 지원자 쪽이 소켓을 안 닫아도
+    # 판정이 계속 돌지 않게 표시부터 남긴다 — 소켓을 닫는 것은 클라이언트 몫이라
+    # 우리가 기다릴 수 없다.
+    session.done = True
     await ws.send_json({"type": "done"})
+
+
+# 끝났는지 백엔드에 다시 물어보는 간격. 면접 하나가 보통 10~20분이라 1분이면
+# 늦어도 1분 안에 멈춘다. 공개 조회 경로라 가볍다.
+DONE_CHECK_SEC = 60.0
+
+
+def _schedule_done_check(client, session: InterviewSession) -> None:
+    """끝났는지 확인을 **뒤에서** 돌린다. 소리 처리를 막지 않는다.
+
+    이 확인은 HTTP 한 번이라 최악이면 10초를 기다린다. 소리 경로에서 그대로
+    기다리면 그동안 들어온 조각이 밀려 답변이 늦게 끝난다.
+    """
+    now = time.monotonic()
+    if now - session.last_done_check < DONE_CHECK_SEC:
+        return
+    session.last_done_check = now
+    asyncio.create_task(_check_done(client, session))
+
+
+async def _check_done(client, session: InterviewSession) -> None:
+    """이 면접이 **다른 경로로** 끝났으면 `session.done` 을 세운다 (2026-09-16).
+
+    지원자 화면의 [면접 종료] 는 백엔드로 바로 간다 — 이 소켓은 통지를 못 받는다.
+    그 뒤에도 마이크가 흐르면 서버는 끝난 세션을 계속 판정한다(앱 오너 실측:
+    종료 뒤에도 `scored` 가 10초에 하나씩, 전부 `no_face`).
+
+    **못 물어보면 계속 듣는다.** 망이 흔들린다고 면접을 끊으면 잃는 것이 더 크다.
+    """
+    try:
+        r = await client.get(
+            f"{iw.BACKEND_URL}/api/v1/public/interview/{session.token}", timeout=10
+        )
+        r.raise_for_status()
+        status = (r.json() or {}).get("status")
+    except Exception:
+        logger.warning("면접 상태 확인 실패: token=%s", session.token[:8])
+        return
+
+    if status == "in_progress":
+        return
+
+    session.done = True
+    logger.info(
+        "다른 경로로 끝난 면접이라 판정을 멈춘다: token=%s status=%s %s",
+        session.token[:8], status, _frame_tally(session),
+    )
 
 
 async def _drop_other_voice(session: InterviewSession, pcm: bytes) -> bytes:
