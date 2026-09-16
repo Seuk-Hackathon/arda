@@ -236,7 +236,6 @@ from app.shared.api.internal import router as internal_router  # noqa: E402
 from app.interview.api.interviews import router as interviews_router  # noqa: E402
 from app.interview.api.interview_rtc import router as interview_rtc_router  # noqa: E402
 from app.application.api.notes import router as notes_router  # noqa: E402
-from app.application.api.portal import router as portal_router  # noqa: E402
 from app.hiring.api.postings import router as postings_router  # noqa: E402
 from app.application.api.public import router as public_router  # noqa: E402
 from app.interview.api.schedules import router as schedules_router  # noqa: E402
@@ -262,7 +261,6 @@ app.include_router(internal_router)
 app.include_router(interviews_router)
 app.include_router(interview_rtc_router)
 app.include_router(notes_router)
-app.include_router(portal_router)
 app.include_router(postings_router)
 app.include_router(public_router)
 app.include_router(schedules_router)
