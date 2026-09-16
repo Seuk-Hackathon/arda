@@ -545,6 +545,11 @@ class InterviewSession:
         # **「앱이 안 보내는 것」과 「서버가 못 찾는 것」을 한 면접 안에서 가르려면**
         # 세션마다 세야 한다. 끝날 때 로그 한 줄로 남긴다 (app.py).
         self.frame_stats = {"recv": 0, "dropped_busy": 0, "in": 0, "face": 0}
+        # 이 면접이 끝났는가. **소켓이 닫히는 것과 별개다** — 지원자 쪽이 소켓을
+        # 안 닫아도(앱이 마이크를 놓지 않거나 웹 탭을 열어 두면) 여기서부터는 더
+        # 듣지 않는다 (2026-09-16, app.py `_close`·`_finished_elsewhere`).
+        self.done = False
+        self.last_done_check = 0.0
         # 이 면접의 프레임이 몇 도 누워 있는가. **처음 얼굴을 찾을 때 정해진다**
         # (`face_row_search`). None 이면 아직 안 정해진 것이고, 그동안만 네 방향을
         # 뒤진다. 각도가 굳혀진 뒤 5초 이상 얼굴을 못 찾으면 None 으로 되돌려

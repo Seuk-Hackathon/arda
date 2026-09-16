@@ -315,3 +315,94 @@ class TestOnlyButtonEnds:
             assert iw.ANSWER_STATS["by_limit"] == before + 1
             assert saved == [(1, "답변입니다")]
         asyncio.run(_t())
+
+
+class TestFinishedSessionStopsScoring:
+    """끝난 면접은 더 듣지 않는다 (2026-09-16, 앱 오너 실측).
+
+    지원자 쪽이 소켓을 안 닫으면 — 앱이 「면접 종료」 뒤에도 마이크를 놓지 않거나
+    웹 탭을 그냥 열어 두면 — 서버가 끝난 세션을 계속 판정했다. 실측에서 `scored`
+    가 10초에 하나씩 올랐고 **그 전부가 `no_face`** 라 통계까지 흐려졌다.
+
+    **소켓만 믿지 않는다** — 지원자 화면의 [면접 종료] 는 백엔드로 바로 가고
+    이 소켓은 통지를 못 받는다. 그래서 주기적으로 백엔드에 물어 스스로 멈춘다.
+    """
+
+    class _Client:
+        def __init__(self, status: str, fail: bool = False):
+            self.status = status
+            self.fail = fail
+            self.calls = 0
+
+        async def get(self, url, timeout=None):
+            self.calls += 1
+            if self.fail:
+                raise RuntimeError("망 끊김")
+            status = self.status
+
+            class R:
+                def raise_for_status(self):
+                    pass
+
+                def json(self):
+                    return {"status": status}
+
+            return R()
+
+    def _session(self):
+        s = srv.InterviewSession("tok-done")
+        s.last_done_check = 0.0
+        return s
+
+    def test_끝난_세션이면_멈춘다(self):
+        s = self._session()
+        asyncio.run(srv._check_done(self._Client("done"), s))
+        assert s.done is True
+
+    def test_진행_중이면_계속_듣는다(self):
+        s = self._session()
+        asyncio.run(srv._check_done(self._Client("in_progress"), s))
+        assert s.done is False
+
+    def test_못_물어보면_계속_듣는다(self):
+        """망이 흔들린다고 면접을 끊으면 잃는 것이 더 크다."""
+        s = self._session()
+        asyncio.run(srv._check_done(self._Client("done", fail=True), s))
+        assert s.done is False
+
+    def test_자주_묻지_않는다(self, monkeypatch):
+        """확인은 1분에 한 번이다 — 소리 조각마다 물으면 그게 부하다."""
+        s = self._session()
+        client = self._Client("in_progress")
+
+        async def run():
+            srv._schedule_done_check(client, s)
+            srv._schedule_done_check(client, s)   # 간격 안 — 또 물으면 안 된다
+            await asyncio.sleep(0.05)
+            assert client.calls == 1
+
+            # 시계를 되감는 대신 마지막 확인 시각을 과거로 민다. `time.monotonic`
+            # 자체를 패치하면 **이벤트 루프의 시계까지 멈춰** 테스트가 걸린다.
+            s.last_done_check -= srv.DONE_CHECK_SEC + 1
+            srv._schedule_done_check(client, s)
+            await asyncio.sleep(0.05)
+            assert client.calls == 2, "간격이 지났는데 안 물었다"
+
+        asyncio.run(run())
+
+    def test_소리_처리를_막지_않는다(self):
+        """확인은 HTTP 한 번이라 최악이면 10초다. 그 자리에서 기다리면 답변이 밀린다."""
+        s = self._session()
+        client = self._Client("done")
+
+        async def run():
+            loop = asyncio.get_running_loop()
+            started = loop.time()
+            srv._schedule_done_check(client, s)
+            assert loop.time() - started < 0.02, "예약만 하고 바로 돌아와야 한다"
+            assert s.done is False, "아직 답을 못 받았는데 멈췄다"
+
+            await asyncio.sleep(0.05)
+            assert s.done is True, "뒤에서 돌던 확인이 끝나면 멈춰야 한다"
+
+        asyncio.run(run())
