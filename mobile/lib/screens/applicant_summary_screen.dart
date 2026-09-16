@@ -427,46 +427,72 @@ class _ApplicationBlock extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            // **단계 칩을 제목 위로 올렸다.** 제목 옆에 두니 칩이 가져간
+            // 폭만큼 공고명이 잘렸다(실기기에서 「백엔드 개발…」로 끊겼다).
+            // 위로 올리면 제목이 한 줄을 통째로 쓴다
             Row(
               children: [
+                _StageChip(label: app.stageLabel, ending: ending),
+                const SizedBox(width: AppSpace.s2),
                 Expanded(
                   child: Text(
-                    app.postingTitle,
+                    '${formatDate(app.appliedAt)} 지원',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
                       fontFamily: AppType.fontFamily,
-                      fontSize: 15,
-                      fontWeight: AppType.wSemiBold,
-                      color: AppColors.text,
+                      fontSize: 11,
+                      color: AppColors.textSub,
                     ),
                   ),
                 ),
-                const SizedBox(width: AppSpace.s2),
-                _StageChip(label: app.stageLabel, ending: ending),
               ],
             ),
-            const SizedBox(height: AppSpace.s2),
+            const SizedBox(height: AppSpace.s3),
+            // **카드에서 제일 큰 것 하나.** 전에는 열두 요소가 전부 10~15px
+            // 라 눈이 붙을 데가 없었다 — 그것이 이 카드가 밋밋했던 까닭이다
             Text(
-              '${formatDate(app.appliedAt)} 지원',
+              app.postingTitle,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
               style: const TextStyle(
                 fontFamily: AppType.fontFamily,
-                fontSize: 11,
-                color: AppColors.textSub,
+                fontSize: 19,
+                fontWeight: FontWeight.w700,
+                letterSpacing: -0.3,
+                height: 1.25,
+                color: AppColors.text,
               ),
             ),
-            const SizedBox(height: AppSpace.s3),
+            const SizedBox(height: AppSpace.s5),
             _StageRail(label: app.stageLabel),
 
             // 끝난 지원은 할 일을 접는다 — 할 것이 없다
             if (!over) ...[
               const SizedBox(height: AppSpace.s4),
-              const Divider(height: 1, color: AppColors.borderSoft),
-              const SizedBox(height: AppSpace.s3),
-              for (var i = 0; i < lines.length; i++) ...[
-                if (i > 0) const SizedBox(height: AppSpace.s3),
-                _TodoRow(no: i + 1, line: lines[i], onOpen: onOpen),
-              ],
+              // **한 겹 내려앉힌다.** 카드가 평면 한 장이라 「공고·여정」과
+              // 「할 일」이 같은 높이에 섞여 있었다. 층을 하나 파면 둘이
+              // 눈에 두 덩어리로 갈린다 — 줄을 지우지 않고도 가벼워진다
+              Container(
+                decoration: const BoxDecoration(
+                  borderRadius: BorderRadius.all(Radius.circular(14)),
+                  color: AppColors.bgSunken,
+                ),
+                child: Column(
+                  children: [
+                    for (var i = 0; i < lines.length; i++) ...[
+                      if (i > 0)
+                        const Divider(
+                          height: 1,
+                          indent: AppSpace.s4,
+                          endIndent: AppSpace.s4,
+                          color: AppColors.borderSoft,
+                        ),
+                      _TodoRow(line: lines[i], onOpen: onOpen),
+                    ],
+                  ],
+                ),
+              ),
             ],
           ],
         ),
@@ -509,7 +535,14 @@ class _StageChip extends StatelessWidget {
   }
 }
 
-/// 네 칸 막대. 지나온 칸은 램프(stage1~3), 지금 칸만 빛난다
+/// 네 역짜리 노선. **굵은 막대 넷이던 것을 점과 선으로 바꿨다.**
+///
+/// 막대는 카드에서 제일 무거운 요소였는데 정작 말하는 것은 「지금 세 번째」
+/// 하나뿐이었다. 점·선은 같은 것을 말하면서 자리를 덜 차지해, 커진 공고명이
+/// 카드의 주인이 된다.
+///
+/// **지나온 역과 안 온 역은 모양이 다르다** — 채운 점 대 빈 점. 색만으로
+/// 가르지 않는다(05-design §1).
 class _StageRail extends StatelessWidget {
   const _StageRail({required this.label});
 
@@ -518,25 +551,36 @@ class _StageRail extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final idx = _stageByLabel[label];
-    // 못 맞추면 아예 안 그린다 — 틀린 막대는 없는 것보다 나쁘다
+    // 못 맞추면 아예 안 그린다 — 틀린 노선은 없는 것보다 나쁘다
     if (idx == null) return const SizedBox.shrink();
     final ending = _endingOf(label);
+    final last = _legNames.length - 1;
+    final now = switch (ending) {
+      'win' => AppColors.ok,
+      // 램프 밖이다 — 진행이 아니라 멈춤이라 무채색을 쓴다
+      'stop' => const Color(0xFF4A5568),
+      _ => AppColors.accent,
+    };
 
     return Row(
       children: [
-        for (var i = 0; i < _legNames.length; i++) ...[
-          if (i > 0) const SizedBox(width: 6),
+        for (var i = 0; i < _legNames.length; i++)
           Expanded(
             child: Column(
               children: [
-                Container(
-                  height: 4,
-                  decoration: BoxDecoration(
-                    borderRadius: const BorderRadius.all(Radius.circular(3)),
-                    color: _barColor(i, idx, ending),
+                SizedBox(
+                  height: 16,
+                  child: Row(
+                    children: [
+                      // 양 끝 바깥쪽은 선을 안 그린다. 그래도 자리는 남겨야
+                      // 네 점이 같은 간격으로 선다
+                      Expanded(child: _wire(on: i <= idx, hide: i == 0)),
+                      _dot(i: i, idx: idx, now: now),
+                      Expanded(child: _wire(on: i < idx, hide: i == last)),
+                    ],
                   ),
                 ),
-                const SizedBox(height: 6),
+                const SizedBox(height: AppSpace.s2),
                 Text(
                   i == idx && ending == 'stop' ? '종료' : _legNames[i],
                   style: TextStyle(
@@ -559,136 +603,160 @@ class _StageRail extends StatelessWidget {
               ],
             ),
           ),
-        ],
       ],
     );
   }
 
-  Color _barColor(int i, int idx, String? ending) {
-    if (i < idx) {
-      return [AppColors.stage1, AppColors.stage2, AppColors.stage3][i];
+  Widget _wire({required bool on, required bool hide}) => Container(
+    height: 2,
+    color: hide
+        ? Colors.transparent
+        : on
+        ? AppColors.stage2
+        : Colors.white.withValues(alpha: 0.08),
+  );
+
+  Widget _dot({required int i, required int idx, required Color now}) {
+    // 지금 역만 링을 한 겹 두른다 — 「여기」가 한눈에 잡힌다
+    if (i == idx) {
+      return Container(
+        width: 16,
+        height: 16,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: now.withValues(alpha: 0.24),
+        ),
+        child: Center(
+          child: Container(
+            width: 8,
+            height: 8,
+            decoration: BoxDecoration(shape: BoxShape.circle, color: now),
+          ),
+        ),
+      );
     }
-    if (i > idx) return Colors.white.withValues(alpha: 0.08);
-    return switch (ending) {
-      'win' => AppColors.ok,
-      // 램프 밖이다 — 진행이 아니라 멈춤이라 무채색을 쓴다
-      'stop' => const Color(0xFF4A5568),
-      _ => AppColors.accent,
-    };
+    // 지나온 역 — 채운 점
+    if (i < idx) {
+      return Container(
+        width: 8,
+        height: 8,
+        decoration: const BoxDecoration(
+          shape: BoxShape.circle,
+          color: AppColors.stage3,
+        ),
+      );
+    }
+    // 아직 안 온 역 — 빈 점
+    return Container(
+      width: 8,
+      height: 8,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        border: Border.all(color: Colors.white.withValues(alpha: 0.18)),
+      ),
+    );
   }
 }
 
-/// 할 일 한 줄. 번호가 붙어 순서가 읽힌다
+/// 할 일 한 줄.
+///
+/// **번호 동그라미와 버튼 상자를 뺐다.** 순서는 위에서 아래로 이미 읽히고,
+/// 바로 위 히어로가 같은 일을 큰 버튼으로 이미 말하는데 여기서 작은 흰 판을
+/// 한 번 더 그리니 줄마다 무게가 붙었다. 게다가 흰 판이 한 화면에 둘이라
+/// 05-design 의 「채운 흰 버튼은 화면에 하나」도 어기고 있었다.
+///
+/// **동사(「하기」)는 남긴다** — 무엇이 일어나는지는 정보고, 무거웠던 것은
+/// 상자다. 대신 줄 전체가 눌린다.
 class _TodoRow extends StatelessWidget {
-  const _TodoRow({required this.no, required this.line, required this.onOpen});
+  const _TodoRow({required this.line, required this.onOpen});
 
-  final int no;
   final _Line line;
   final ValueChanged<ApplicantTab> onOpen;
 
   @override
   Widget build(BuildContext context) {
-    final (badgeBg, badgeFg) = switch (line.tone) {
-      _Tone.done => (AppColors.okSoft, AppColors.okText),
-      _Tone.todo => (AppColors.accentSoft, AppColors.accentText),
-      _Tone.quiet => (AppColors.bgSunken, AppColors.textSub),
+    final dot = switch (line.tone) {
+      _Tone.done => AppColors.ok,
+      _Tone.todo => AppColors.accent,
+      _Tone.quiet => AppColors.neutral,
     };
 
-    return Row(
-      children: [
-        Container(
-          width: 22,
-          height: 22,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(shape: BoxShape.circle, color: badgeBg),
-          child: Text(
-            line.tone == _Tone.done ? '✓' : '$no',
-            style: TextStyle(
-              fontFamily: AppType.fontFamily,
-              fontSize: 11,
-              fontWeight: AppType.wSemiBold,
-              color: badgeFg,
+    final row = Padding(
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpace.s4,
+        vertical: AppSpace.s3,
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 7,
+            height: 7,
+            decoration: BoxDecoration(shape: BoxShape.circle, color: dot),
+          ),
+          const SizedBox(width: AppSpace.s3),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  line.label,
+                  style: const TextStyle(
+                    fontFamily: AppType.fontFamily,
+                    fontSize: 13,
+                    fontWeight: AppType.wSemiBold,
+                    color: AppColors.text,
+                  ),
+                ),
+                const SizedBox(height: 1),
+                Text(
+                  line.due != null
+                      ? '${line.state} · ${line.due!.text}'
+                      : line.state,
+                  style: TextStyle(
+                    fontFamily: AppType.fontFamily,
+                    fontSize: 11,
+                    // 사흘 아래면 마감이 먼저다 — 히어로가 쓰는 경계와 같다
+                    color: line.due?.near == true
+                        ? AppColors.warnText
+                        : switch (line.tone) {
+                            _Tone.todo => AppColors.accentText,
+                            _Tone.done => AppColors.okText,
+                            _Tone.quiet => AppColors.textSub,
+                          },
+                  ),
+                ),
+              ],
             ),
           ),
-        ),
-        const SizedBox(width: AppSpace.s3),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                line.label,
-                style: const TextStyle(
-                  fontFamily: AppType.fontFamily,
-                  fontSize: AppType.caption,
-                  fontWeight: AppType.wSemiBold,
-                  color: AppColors.text,
-                ),
+          // 갈 곳이 없으면 문을 안 그린다 — 눌러도 막히는 줄이 된다
+          if (line.action.isNotEmpty) ...[
+            const SizedBox(width: AppSpace.s2),
+            Text(
+              line.action,
+              style: const TextStyle(
+                fontFamily: AppType.fontFamily,
+                fontSize: AppType.caption,
+                fontWeight: AppType.wSemiBold,
+                color: AppColors.accentText,
               ),
-              Text(
-                line.due != null
-                    ? '${line.state} · ${line.due!.text}'
-                    : line.state,
-                style: TextStyle(
-                  fontFamily: AppType.fontFamily,
-                  fontSize: 11,
-                  color: switch (line.tone) {
-                    _Tone.todo => AppColors.accentText,
-                    _Tone.done => AppColors.okText,
-                    _Tone.quiet => AppColors.textSub,
-                  },
-                ),
-              ),
-            ],
-          ),
-        ),
-        // 갈 곳이 없으면 문을 안 그린다 — 눌러도 막히는 버튼이 된다
-        if (line.action.isNotEmpty) ...[
-          const SizedBox(width: AppSpace.s2),
-          _MiniButton(
-            label: line.action,
-            strong: line.tone == _Tone.todo,
-            onTap: () => onOpen(line.tab),
-          ),
+            ),
+            const Icon(
+              Icons.chevron_right,
+              size: 16,
+              color: AppColors.accentText,
+            ),
+          ],
         ],
-      ],
+      ),
     );
-  }
-}
 
-class _MiniButton extends StatelessWidget {
-  const _MiniButton({
-    required this.label,
-    required this.strong,
-    required this.onTap,
-  });
-
-  final String label;
-  final bool strong;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
+    if (line.action.isEmpty) return row;
     return Material(
-      color: strong ? AppColors.accentFill : AppColors.bgSunken,
-      borderRadius: const BorderRadius.all(Radius.circular(10)),
-      clipBehavior: Clip.antiAlias,
+      color: Colors.transparent,
       child: InkWell(
-        onTap: onTap,
-        child: Container(
-          height: 30,
-          padding: const EdgeInsets.symmetric(horizontal: AppSpace.s3),
-          alignment: Alignment.center,
-          child: Text(
-            label,
-            style: TextStyle(
-              fontFamily: AppType.fontFamily,
-              fontSize: 11,
-              fontWeight: AppType.wSemiBold,
-              color: strong ? AppColors.onAccent : AppColors.text,
-            ),
-          ),
-        ),
+        onTap: () => onOpen(line.tab),
+        borderRadius: const BorderRadius.all(Radius.circular(14)),
+        child: row,
       ),
     );
   }
