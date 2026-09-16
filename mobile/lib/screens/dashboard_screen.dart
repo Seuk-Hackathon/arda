@@ -143,23 +143,30 @@ class _DashboardScreenState extends State<DashboardScreen> {
         ),
         const SizedBox(height: AppSpace.s3),
 
-        _Card(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              _CardHead(
-                title: '오늘 면접',
-                // §2 표기 통일: 날짜는 2026.09.02 형태. 건수는 사람이 아니라
-                // 일정이므로 `2명`이 아니라 `2건`
-                meta:
-                    '${formatDate(day)} · ${formatItemCount(interviews.length)}',
-              ),
-              for (final interview in interviews) _InterviewRow(interview),
-              _CardLink(label: '캘린더 →', onTap: widget.onOpenCalendar),
-            ],
+        // **오늘이 0건이면 이 카드를 아예 안 그린다** (2026-09-15).
+        //
+        // 히어로가 바로 위에서 「면접이 없는 날이에요」를 이미 말했는데, 그
+        // 아래 제목과 「캘린더 →」만 남은 빈 카드가 또 서 있었다 — 같은 말을
+        // 두 번 하면서 화면만 비웠다(실기기에서 확인). 있을 때만 그린다.
+        if (interviews.isNotEmpty) ...[
+          _Card(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _CardHead(
+                  title: '오늘 면접',
+                  // §2 표기 통일: 날짜는 2026.09.02 형태. 건수는 사람이 아니라
+                  // 일정이므로 `2명`이 아니라 `2건`
+                  meta:
+                      '${formatDate(day)} · ${formatItemCount(interviews.length)}',
+                ),
+                for (final interview in interviews) _InterviewRow(interview),
+                _CardLink(label: '캘린더 →', onTap: widget.onOpenCalendar),
+              ],
+            ),
           ),
-        ),
-        const SizedBox(height: AppSpace.s3),
+          const SizedBox(height: AppSpace.s3),
+        ],
 
         // ② 「내 리뷰 대기」 카드가 여기 있었다 — 평가 현황으로 보내는 유일한
         //   채운 버튼이었다. 2026-09-15 에 평가 현황과 함께 뺐다.
