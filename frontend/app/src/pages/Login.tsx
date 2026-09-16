@@ -51,12 +51,14 @@ export default function Login() {
   const sceneRef = useRef<SceneHandle | null>(null)
 
   /* 심사자 자동 로그인 (박제 온프레미스 전용 · 2026-09-16).
-     페이지 안 버튼 · URL 쿼리 두 방식 지원. */
+     페이지 안 버튼 · URL 쿼리 두 방식 지원.
+     담당자 시연 계정은 `ab@ab.com` (admin) — 백엔드 `DEMO_LOCKED_EMAILS` 에 올라 있어
+     비밀번호 변경·비활성화·역할 변경이 막힌다. 심사위원이 건드려도 자동 로그인이 안 깨진다. */
   async function demoLoginStaff() {
     try {
       setError(null)
       setPending(true)
-      await login('ssuvisdev@gmail.com', 'arda12!@')
+      await login('ab@ab.com', 'ab12!@')
       navigate('/dashboard', { replace: true })
     } catch (err) {
       setError(err instanceof ApiError ? err.message : '자동 로그인 실패')
@@ -68,7 +70,10 @@ export default function Login() {
       setError(null)
       setRole('applicant')
       setPending(true)
-      const res = await applicantAuth.login('demo-applicant@arda.local', '19980315')
+      /* 지원자 시연 = 실제 데이터가 있는 합격자 한 명 (2026-09-16 프로덕션 덤프 기준):
+         조민석 · 백엔드 공고 · 서류 pass 84점 · 이력서 2건 · AI 요약 · 면접 세션 있음.
+         심사위원이 사전 성향 설문·면접 흐름을 그대로 볼 수 있어야 해서 빈 계정을 안 쓴다. */
+      const res = await applicantAuth.login('fitcheck-be-01@example.com', '19950101')
       setApplicantToken(res.access_token)
       navigate('/my', { replace: true })
     } catch (err) {
