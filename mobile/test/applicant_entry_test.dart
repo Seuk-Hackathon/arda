@@ -252,4 +252,100 @@ void main() {
       expect(loginButton(tester).onPressed, isNotNull);
     });
   });
+
+  /* ── 비밀번호 로그인 (2026-09-16, 백엔드 PR #268) ──────────────────
+
+     **비밀번호를 정한 계정은 생년월일로 401 이다.** 그런데 그 401 은 없는
+     이메일·틀린 생년월일과 **같은 문구**라(서버가 일부러 안 나눈다) 화면이
+     이유를 알려 줄 수 없다. 그래서 갈아타는 길이 **늘 보여야** 한다 — 늘
+     보이므로 계정 상태도 안 새어 나간다. */
+  group('비밀번호 로그인', () {
+    testWidgets('두 갈래를 오갈 수 있다 — 길이 늘 보인다', (tester) async {
+      disableMotion(tester);
+      await tester.pumpWidget(host());
+      await toApplicant(tester);
+
+      // 기본은 생년월일 — 지금 지원자는 대부분 비밀번호가 없다
+      expect(find.text('생년월일 8자리'), findsOneWidget);
+      expect(find.text('비밀번호로 로그인'), findsOneWidget);
+
+      await tester.tap(find.text('비밀번호로 로그인'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('생년월일 8자리'), findsNothing);
+      expect(find.text('비밀번호'), findsWidgets);
+      // 되돌아가는 길도 있다
+      expect(find.text('생년월일로 로그인'), findsOneWidget);
+    });
+
+    testWidgets('비밀번호로 들어가면 비밀번호 갈래로 부른다', (tester) async {
+      disableMotion(tester);
+      final portal = FakeApplicantPortalRepository();
+      await tester.pumpWidget(host(portal: portal));
+      await toApplicant(tester);
+
+      await tester.tap(find.text('비밀번호로 로그인'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField).first, 'a@b.com');
+      await tester.enterText(find.byType(TextField).last, 'hunter2hunter2');
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('로그인'));
+      await tester.pumpAndSettle();
+
+      expect(portal.calls, contains('loginWithPassword:a@b.com:hunter2hunter2'));
+      expect(find.text('지원자 홈'), findsOneWidget);
+    });
+
+    testWidgets('설정 링크를 보내면 보냈다고 한다', (tester) async {
+      disableMotion(tester);
+      final portal = FakeApplicantPortalRepository();
+      await tester.pumpWidget(host(portal: portal));
+      await toApplicant(tester);
+
+      await tester.enterText(find.byType(TextField).first, 'a@b.com');
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('비밀번호 설정 링크 받기'));
+      await tester.pumpAndSettle();
+
+      expect(portal.calls, contains('requestPasswordSetup:a@b.com'));
+      expect(find.textContaining('메일을 보냈습니다'), findsOneWidget);
+    });
+
+    // **이것이 핵심이다.** 실패를 그대로 보여 주면 「그 이메일은 없습니다」가
+    // 되어, 이 화면이 「이 사람이 여기 지원했나」를 떠보는 도구가 된다
+    testWidgets('설정 링크 요청이 실패해도 같은 문구다 — 떠보기를 막는다', (tester) async {
+      disableMotion(tester);
+      final portal = FakeApplicantPortalRepository()
+        ..setupError = const ServerError(500, '보내지 못했습니다');
+      await tester.pumpWidget(host(portal: portal));
+      await toApplicant(tester);
+
+      await tester.enterText(find.byType(TextField).first, 'nobody@nowhere.com');
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('비밀번호 설정 링크 받기'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('메일을 보냈습니다'), findsOneWidget);
+      expect(find.textContaining('보내지 못했습니다'), findsNothing);
+    });
+
+    testWidgets('이메일이 비면 링크를 못 보낸다 — 보낼 곳이 없다', (tester) async {
+      disableMotion(tester);
+      final portal = FakeApplicantPortalRepository();
+      await tester.pumpWidget(host(portal: portal));
+      await toApplicant(tester);
+
+      final link = tester.widget<InkWell>(
+        find
+            .ancestor(
+              of: find.text('비밀번호 설정 링크 받기'),
+              matching: find.byType(InkWell),
+            )
+            .first,
+      );
+      expect(link.onTap, isNull);
+      expect(portal.calls, isNot(contains(startsWith('requestPasswordSetup'))));
+    });
+  });
 }
