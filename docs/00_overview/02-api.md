@@ -281,6 +281,7 @@
 | POST | /internal/interview/{token}/verdict | 면접 실시간 판정을 담당자에게 민다 | 본문 `{truth_pct?, lie_pct?, window_sec?, …}`. **204 고정** |
 | GET | /internal/interview/{token}/questions | 면접 질문 전체 `[{seq, question}]` | 워커가 시작할 때 한 번. **전사를 안 기다리고 다음 질문을 보내기 위한 것** |
 | POST | /internal/interview/{token}/turns/{seq}/answered | 이 질문에 **답을 마쳤다**고 남긴다 → `{seq, answered_at}` | 워커가 말이 끝나는 순간 부른다(2026-09-11). 전사는 나중에 `/public/interview/{token}/answer` 에 같은 `seq` 로 채운다. 멱등 — 처음 시각을 지킨다. 진행 중이 아니면 409, 없는 번호면 404. **"지금 질문" 은 `answered_at` 이 빈 가장 앞 칸** |
+| POST | /internal/interview/{token}/turns/{seq}/audio | **전사에 실패한 답변의 음성 위치**를 남긴다 → `{seq, audio_s3_key}` | 2026-09-16 신설. 워커가 `[전사 …]` 자리표시자로 떨어질 때만 부른다 — 음성을 올린 뒤 그 키를 여기 붙인다. 담당자가 `POST /interview-sessions/{id}/retranscribe` 를 누르면 이 음성으로 다시 받아쓴다. **이미 받아쓴 회차면 409**(멀쩡한 답변을 다시 받아쓰게 되므로), 발급 경로가 만든 키 모양이 아니면 422, 없는 번호면 404. **전사는 여기서 하지 않는다** — 워커를 기다리게 하지 않는 자리다 |
 | GET | /internal/interview/{token}/portrait | 이력서에 든 증명사진 원본 바이트 | `image/jpeg`. 사진이 없으면 **404**(정상 — 워커가 확인을 건너뛴다) |
 | POST | /internal/interview/{token}/identity | 이력서 사진 대조 결과를 담당자에게 민다 | 본문 `{match: same\|different\|unclear, score}`. 면접당 **한 번**. 204 고정 |
 
