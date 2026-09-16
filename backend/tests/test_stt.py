@@ -217,3 +217,107 @@ class TestBackendDispatch:
             patch.object(stt, "LOCAL_MODEL", "large-v3"),
         ):
             assert stt.backend_tag() == "faster-whisper:large-v3"
+
+
+class TestEmptyBackendEnv:
+    """**빈 값도 기본값으로 본다** (2026-09-16).
+
+    `os.getenv(…, "openai")` 는 변수가 "있고 비어 있으면" 기본값을 안 쓴다. 운영
+    `.env` 에 `STT_BACKEND=` 로 비워 두자 **전사 경로가 통째로 죽었다** — 업로드
+    답변·재전사·아르 음성 입력이 전부 503/502 였고, 요청 로그에만 남아 아무도
+    몰랐다(2026-09-16 실측).
+    """
+
+    def test_빈_문자열이면_openai_로_읽는다(self, monkeypatch):
+        import importlib
+
+        from app.agent import stt
+
+        monkeypatch.setenv("STT_BACKEND", "")
+        reloaded = importlib.reload(stt)
+        try:
+            assert reloaded.STT_BACKEND == "openai"
+        finally:
+            monkeypatch.delenv("STT_BACKEND", raising=False)
+            importlib.reload(stt)
+
+    def test_공백만_있어도_기본값(self, monkeypatch):
+        import importlib
+
+        from app.agent import stt
+
+        monkeypatch.setenv("STT_BACKEND", "   ")
+        reloaded = importlib.reload(stt)
+        try:
+            assert reloaded.STT_BACKEND == "openai"
+        finally:
+            monkeypatch.delenv("STT_BACKEND", raising=False)
+            importlib.reload(stt)
+
+
+class TestSilenceGuard:
+    """무음에 지어낸 조각을 버린다 (2026-09-16, ADR-0038 후속).
+
+    whisper-1 은 무음·잡음에도 말을 지어낸다 — 유튜브 자막 문구가 지원자 답변으로
+    저장된 사고가 있었다(2026-09-15). API 에는 로컬의 `vad_filter` 가 없어서
+    `verbose_json` 의 `no_speech_prob` 로 거른다. **그 가드가 실시간 경로에만 있고
+    백엔드(업로드 답변·재전사)에는 없었다.**
+    """
+
+    @staticmethod
+    def _resp(segments, text="통째로 온 글"):
+        r = MagicMock()
+        r.text = text
+        r.segments = segments
+        r.duration = 3.0
+        return r
+
+    @staticmethod
+    def _seg(text, prob):
+        s = MagicMock()
+        s.text = text
+        s.no_speech_prob = prob
+        return s
+
+    def test_무음_조각은_버리고_말한_것만_남긴다(self):
+        from app.agent import stt
+
+        out = stt._text_without_silence(
+            self._resp([
+                self._seg(" 결제 정산 API 를 맡았습니다", 0.02),
+                self._seg(" 다음 영상에서 만나요!", 0.95),
+            ])
+        )
+
+        assert out == "결제 정산 API 를 맡았습니다"
+
+    def test_전부_무음이면_빈_글이다(self):
+        """빈 글은 「말이 안 담겼다」라 저장되지 않고 다시 답하게 된다 — 맞는 결과다."""
+        from app.agent import stt
+
+        assert stt._text_without_silence(
+            self._resp([self._seg(" 시청해주셔서 감사합니다", 0.9)])
+        ) == ""
+
+    def test_조각_정보가_없으면_통째로_쓴다(self):
+        """모델·형식이 바뀌어 조각이 안 와도 **답변을 잃지는 않는다** — 거르지 못할 뿐."""
+        from app.agent import stt
+
+        assert stt._text_without_silence(self._resp(None)) == "통째로 온 글"
+
+    def test_로컬_전사도_vad_로_거른다(self):
+        from app.agent import stt
+
+        fake_seg = MagicMock()
+        fake_seg.text = "안녕하세요"
+        fake_info = MagicMock()
+        fake_info.duration = 2.0
+        fake_model = MagicMock()
+        fake_model.transcribe.return_value = (iter([fake_seg]), fake_info)
+
+        with patch.object(stt, "_get_local_model", return_value=fake_model):
+            stt._transcribe_local(b"audio")
+
+        kwargs = fake_model.transcribe.call_args.kwargs
+        assert kwargs["vad_filter"] is True, "무음에 지어낸 말이 답변으로 저장된다"
+        assert kwargs["condition_on_previous_text"] is False
