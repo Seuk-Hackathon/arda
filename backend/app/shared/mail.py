@@ -366,7 +366,11 @@ def _get_dispatcher():
     SQS·n8n 발행 로직은 각 어댑터(`adapter/outbound/mail/`)에 있다. 이 함수만 mock
     하면 publish 흐름을 격리 검증할 수 있다.
     """
-    from app.adapter.outbound.mail import N8nMailDispatcher, SqsMailDispatcher
+    from app.adapter.outbound.mail import (
+        N8nMailDispatcher,
+        SmtpMailDispatcher,
+        SqsMailDispatcher,
+    )
 
     # 2026-09-14 default 를 `n8n` 으로 (ADR-0036). 프로덕션에는 이미 명시돼 있고,
     # 로컬·테스트에서 unset 이었을 때 SQS 로 조용히 보내던 것을 막는다 — 워커가
@@ -375,6 +379,10 @@ def _get_dispatcher():
     dispatch = os.getenv("MAIL_DISPATCH", "n8n").strip().lower()
     if dispatch in {"worker", "sqs"}:
         return SqsMailDispatcher()
+    if dispatch == "smtp":
+        # n8n 없이 도는 경로 (2026-09-16). 리허설에서 n8n 을 내려 보거나,
+        # n8n 이 길게 죽었을 때 스위치 하나로 갈아탄다.
+        return SmtpMailDispatcher()
     return N8nMailDispatcher()
 
 
@@ -392,7 +400,31 @@ def publish(email_log_id: int, *, dispatcher=None) -> None:
     """
     if dispatcher is None:
         dispatcher = _get_dispatcher()
-    dispatcher.publish(email_log_id)
+    try:
+        dispatcher.publish(email_log_id)
+    except Exception:
+        # **못 실었으면 여기서 직접 보낸다** (2026-09-16, ADR-0031·ADR-0036 후속).
+        #
+        # 발송 경로가 n8n 하나뿐이라, 그것이 멈추면 합격·불합격 통보가 통째로
+        # 멎는다. 그 사실이 드러나는 것은 지원자가 "연락이 없다" 고 말할 때다.
+        # SMTP 설정이 있으면 그 자리에서 보내고, 없으면 예전처럼 예외를 올린다 —
+        # **설정이 없는데 조용히 다른 데로 보내지 않는다.**
+        from app.shared import mail_smtp
+
+        if isinstance(dispatcher, _smtp_dispatcher_type()) or not mail_smtp.available():
+            raise
+        logger.exception(
+            "메일 발행 실패 — SMTP 폴백으로 보낸다 email_log_id=%s", email_log_id
+        )
+        if not mail_smtp.send_log_id(email_log_id):
+            raise
+
+
+def _smtp_dispatcher_type():
+    """폴백이 자기 자신을 다시 부르지 않게 하는 확인용."""
+    from app.adapter.outbound.mail import SmtpMailDispatcher
+
+    return SmtpMailDispatcher
 
 
 
