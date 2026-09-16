@@ -555,14 +555,20 @@ class _EmptyWeek extends StatelessWidget {
                     minHeight: AppLayout.minTouchTarget,
                   ),
                   padding: const EdgeInsets.symmetric(horizontal: AppSpace.s5),
-                  alignment: Alignment.center,
-                  child: const Text(
-                    '다음 주 보기',
-                    style: TextStyle(
-                      fontFamily: AppType.fontFamily,
-                      fontSize: AppType.caption,
-                      fontWeight: FontWeight.w700,
-                      color: AppColors.onAccent,
+                  // **`alignment` 를 쓰면 안 된다** — Container 는 alignment 가
+                  // 있으면 받은 제약의 최대 폭을 먹어서 흰 판이 화면을 가로지른다
+                  // (Align 으로 감싸도 마찬가지다. 느슨한 제약의 최대가 화면 폭이다).
+                  // `widthFactor: 1` 이면 세로 가운데는 잡으면서 폭은 글자만큼이다
+                  child: const Center(
+                    widthFactor: 1,
+                    child: Text(
+                      '다음 주 보기',
+                      style: TextStyle(
+                        fontFamily: AppType.fontFamily,
+                        fontSize: AppType.caption,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.onAccent,
+                      ),
                     ),
                   ),
                 ),

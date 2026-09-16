@@ -647,14 +647,18 @@ class _LeadRow extends StatelessWidget {
               // §9 터치 타깃
               constraints: const BoxConstraints(minHeight: 40),
               padding: const EdgeInsets.symmetric(horizontal: AppSpace.s4),
-              alignment: Alignment.center,
-              child: const Text(
-                '캘린더',
-                style: TextStyle(
-                  fontFamily: AppType.fontFamily,
-                  fontSize: AppType.caption,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.onAccent,
+              // `alignment` 대신 `Center(widthFactor: 1)` — 위 캘린더 화면과
+              // 같은 이유다. alignment 를 주면 남는 폭을 다 먹는다
+              child: const Center(
+                widthFactor: 1,
+                child: Text(
+                  '캘린더',
+                  style: TextStyle(
+                    fontFamily: AppType.fontFamily,
+                    fontSize: AppType.caption,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.onAccent,
+                  ),
                 ),
               ),
             ),
