@@ -110,6 +110,14 @@ abstract final class Endpoints {
   /// **여기만 토큰 없이 부른다.** 나머지는 받은 토큰을 Bearer 로 붙인다
   static const applicantLogin = '/public/applicant/login';
 
+  /// 비밀번호 설정 링크를 메일로 보내 달라고 한다 (2026-09-16).
+  ///
+  /// **지원 이력이 없어도 202 다.** 있고 없고를 알려 주면 「이 사람이 여기
+  /// 지원했나」를 떠보는 도구가 된다 — 로그인이 401 하나로만 답하는 것과
+  /// 같은 원칙이다(ADR-0033).
+  static const applicantPasswordSetupRequest =
+      '/public/applicant/password-setup-request';
+
   /// 내 지원 현황 — 지원·면접·인적성·일정 토큰이 한 번에 온다.
   /// **조회 인자를 받지 않는다** — 서버가 토큰의 이메일로만 찾는다
   static const applicantMe = '/applicant/me';

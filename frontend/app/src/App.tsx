@@ -18,6 +18,7 @@ import InterviewAi from './pages/InterviewAi'
 import InterviewWatch from './pages/InterviewWatch'
 import MyShell from './pages/MyShell'
 import Aptitude from './pages/Aptitude'
+import SetPassword from './pages/SetPassword'
 import Dashboard from './pages/Dashboard'
 import Postings from './pages/Postings'
 import PostingApplicants from './pages/PostingApplicants'
@@ -52,6 +53,11 @@ export default function App() {
         <Route path="/login" element={<Login />} />
         {/* 공개 지원 폼 (C1). 지원자는 로그인이 없으므로 RequireAuth·Layout 밖이다. */}
         <Route path="/apply/:token" element={<Apply />} />
+        {/* 지원자 비밀번호 설정 — 메일 링크 착지점 (2026-09-16).
+            **경로를 서버가 조립한다** (`{PUBLIC_APP_BASE_URL}/set-password/<token>`)
+            — 바꾸려면 백엔드와 같이 바꿔야 한다. 처음 정하기·재설정·재발급이
+            모두 이 한 경로다. */}
+        <Route path="/set-password/:token" element={<SetPassword />} />
         {/* 지원자용 면접 일정 선택 — 메일 링크 착지점 (ADR-0016). 마찬가지로 로그인 밖 */}
         <Route path="/schedule/:token" element={<Schedule />} />
         {/* 지원자용 AI 면접 — 메일 링크 착지점. 로그인 밖.

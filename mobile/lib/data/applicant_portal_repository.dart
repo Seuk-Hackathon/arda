@@ -59,6 +59,42 @@ class ApplicantPortalRepository {
     await _store.write(token);
   }
 
+  /// 비밀번호로 로그인 (2026-09-16, 백엔드 PR #268).
+  ///
+  /// 같은 경로에 본문만 다르다. **비밀번호를 정한 계정은 생년월일로 401 인데
+  /// 그것도 같은 401 이다** — 화면이 「비밀번호를 정하셨네요」라고 말하면
+  /// 서버가 감춘 계정 상태를 도로 드러낸다.
+  Future<void> loginWithPassword({
+    required String email,
+    required String password,
+  }) async {
+    final json = await _client.post(
+      Endpoints.applicantLogin,
+      body: {'email': email, 'password': password},
+      authenticated: false,
+    );
+    final token = json['access_token'] as String?;
+    if (token == null || token.isEmpty) {
+      throw const ServerError(502, '로그인 응답을 이해하지 못했습니다.');
+    }
+    await _store.write(token);
+  }
+
+  /// 비밀번호 설정 링크를 메일로 보내 달라고 한다.
+  ///
+  /// **성공·실패를 화면이 갈라 말하면 안 된다.** 서버가 지원 이력과 무관하게
+  /// 202 를 주는 것과 같은 이유다.
+  ///
+  /// 링크는 웹으로 열린다(`{PUBLIC_APP_BASE_URL}/set-password/<token>`).
+  /// **앱에는 설정 화면이 없다** — 앱 매니페스트에 딥링크가 없어 메일 링크는
+  /// 브라우저로 열리고, 두 벌을 만들 이유가 없다.
+  Future<void> requestPasswordSetup({required String email}) =>
+      _client.post(
+        Endpoints.applicantPasswordSetupRequest,
+        body: {'email': email},
+        authenticated: false,
+      );
+
   /// 내 지원 현황. **401 이면 만료다** — [ApiClient] 가 저장된 토큰을 버리고
   /// [AuthExpired] 를 던지므로, 부르는 쪽은 로그인 화면으로 보내면 된다
   Future<ApplicantMe> me() async {

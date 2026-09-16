@@ -545,8 +545,10 @@ void main() {
       for (final label in ['낸 지원', '할 일', '합격']) {
         expect(find.text(label), findsOneWidget);
       }
-      // 지원자에게는 비밀번호가 없다 — 자리만 두고 이유를 적는다
-      expect(find.text('지금은 생년월일로 로그인해요'), findsOneWidget);
+      // 2026-09-16: 지원자에게도 비밀번호가 생겼다. **다만 여기서 안 바꾼다** —
+      // 설정·재설정이 메일 링크 한 경로이고 그 링크는 웹에서 열린다.
+      // 「준비 중」이 아니라 **어디서 하는지**를 적는다
+      expect(find.text('로그인 화면에서 「비밀번호 설정 링크 받기」'), findsOneWidget);
       expect(find.text('로그아웃'), findsOneWidget);
     });
   });

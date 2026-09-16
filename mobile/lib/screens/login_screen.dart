@@ -746,21 +746,34 @@ class _ApplicantForm extends StatefulWidget {
   State<_ApplicantForm> createState() => _ApplicantFormState();
 }
 
+/// 지원자가 무엇으로 들어오는가 (2026-09-16).
+enum _ApplicantWay { birth, password }
+
 class _ApplicantFormState extends State<_ApplicantForm> {
   final _email = TextEditingController();
   final _birth = TextEditingController();
+  final _password = TextEditingController();
 
   late final ApplicantPortalRepository _portal =
       widget.portal ?? ApplicantPortalRepository();
 
+  /// **생년월일이 계속 기본이다** — 지금 지원자는 대부분 비밀번호가 없다.
+  /// 그래도 갈아타는 길은 늘 보인다(아래 [_ways] 주석).
+  _ApplicantWay _way = _ApplicantWay.birth;
+
   bool _sending = false;
   String? _error;
+
+  /// 설정 링크를 보냈다고 화면에 적었는가. **보냈는지 못 보냈는지는 안 가른다**
+  bool _linkSent = false;
+  bool _linkSending = false;
 
   @override
   void initState() {
     super.initState();
     _email.addListener(_onChanged);
     _birth.addListener(_onChanged);
+    _password.addListener(_onChanged);
   }
 
   void _onChanged() => setState(() => _error = null);
@@ -769,20 +782,76 @@ class _ApplicantFormState extends State<_ApplicantForm> {
   void dispose() {
     _email.dispose();
     _birth.dispose();
+    _password.dispose();
     super.dispose();
   }
 
   bool get _canSubmit =>
       !_sending &&
       _email.text.trim().isNotEmpty &&
-      _birth.text.length == _birthLength;
+      (_way == _ApplicantWay.password
+          ? _password.text.isNotEmpty
+          : _birth.text.length == _birthLength);
+
+  /// 설정 링크 보내기. **결과에 따라 문구를 가르지 않는다** — 서버가 지원
+  /// 이력과 무관하게 202 를 주는 것과 같은 이유다(떠보기 방지).
+  Future<void> _sendLink() async {
+    final to = _email.text.trim();
+    if (to.isEmpty || _linkSending) return;
+    setState(() {
+      _linkSending = true;
+      _error = null;
+    });
+    try {
+      await _portal.requestPasswordSetup(email: to);
+    } catch (e) {
+      // 실패해도 같은 화면이다. 여기서 갈라 말하면 위 원칙이 깨진다
+      if (kDebugMode) debugPrint('[applicant] 설정 링크 요청 실패: $e');
+    }
+    if (!mounted) return;
+    setState(() {
+      _linkSending = false;
+      _linkSent = true;
+    });
+  }
+
+  /// 「비밀번호로 로그인 · 설정 링크 받기」 두 줄.
+  ///
+  /// **늘 보인다.** 비밀번호를 정한 계정은 생년월일로 401 인데 그 문구가
+  /// 공통이라(서버가 일부러 안 나눈다) 화면이 이유를 알려 줄 수 없다. 길이 늘
+  /// 열려 있어야 지원자가 스스로 찾고, 늘 보이므로 아무것도 안 새어 나간다.
+  Widget _ways() {
+    final busy = _sending || _linkSending;
+    // **`Row` 가 아니라 `Wrap` 이다.** 두 글자 링크가 좁은 카드(310px)에서
+    // 4.3px 넘쳤다 — 가운뎃점으로 이으면 줄을 못 바꾼다
+    return Wrap(
+      spacing: AppSpace.s4,
+      children: [
+        _WayLink(
+          label: _way == _ApplicantWay.birth ? '비밀번호로 로그인' : '생년월일로 로그인',
+          onTap: busy
+              ? null
+              : () => setState(() {
+                  _way = _way == _ApplicantWay.birth
+                      ? _ApplicantWay.password
+                      : _ApplicantWay.birth;
+                  _error = null;
+                }),
+        ),
+        _WayLink(
+          label: _linkSending ? '보내는 중…' : '비밀번호 설정 링크 받기',
+          onTap: busy || _email.text.trim().isEmpty ? null : _sendLink,
+        ),
+      ],
+    );
+  }
 
   Future<void> _submit() async {
     if (!_canSubmit) return;
     // 8자리를 채웠어도 날짜가 아닐 수 있다(19981345). 왕복 한 번을 아끼고,
     // 무엇이 틀렸는지도 여기서 더 정확히 말해 줄 수 있다 — 서버는 형식 오류도
     // 일부러 401 로만 답한다(떠보기 방지)
-    if (!_looksLikeBirthdate(_birth.text)) {
+    if (_way == _ApplicantWay.birth && !_looksLikeBirthdate(_birth.text)) {
       setState(() => _error = '생년월일을 다시 확인해 주세요. 예: 19980315');
       return;
     }
@@ -792,7 +861,14 @@ class _ApplicantFormState extends State<_ApplicantForm> {
       _error = null;
     });
     try {
-      await _portal.login(email: _email.text.trim(), birthdate: _birth.text);
+      if (_way == _ApplicantWay.password) {
+        await _portal.loginWithPassword(
+          email: _email.text.trim(),
+          password: _password.text,
+        );
+      } else {
+        await _portal.login(email: _email.text.trim(), birthdate: _birth.text);
+      }
       if (!mounted) return;
       Navigator.pushReplacementNamed(context, Routes.applicantHome);
     } on ApiError catch (e) {
@@ -830,21 +906,40 @@ class _ApplicantFormState extends State<_ApplicantForm> {
           autofillHints: const [AutofillHints.username],
         ),
         const SizedBox(height: AppSpace.s4),
-        _Field(
-          label: '생년월일 8자리',
-          controller: _birth,
-          hint: '예: 19980315',
-          // 비밀번호 자리라 가린다. 대신 8자리를 다 채우기 전에는 버튼이 안
-          // 살아나고, 날짜가 아니면 보내기 전에 잡아 준다
-          obscureText: true,
-          keyboardType: TextInputType.number,
-          inputFormatters: [
-            FilteringTextInputFormatter.digitsOnly,
-            // maxLength 를 안 쓰는 이유: 입력창 아래 카운터가 붙어 칸 높이가 는다
-            LengthLimitingTextInputFormatter(_birthLength),
-          ],
-          onSubmitted: _canSubmit ? (_) => _submit() : null,
-        ),
+        if (_way == _ApplicantWay.password)
+          _Field(
+            label: '비밀번호',
+            controller: _password,
+            hint: '비밀번호',
+            obscureText: true,
+            autofillHints: const [AutofillHints.password],
+            onSubmitted: _canSubmit ? (_) => _submit() : null,
+          )
+        else
+          _Field(
+            label: '생년월일 8자리',
+            controller: _birth,
+            hint: '예: 19980315',
+            // 비밀번호 자리라 가린다. 대신 8자리를 다 채우기 전에는 버튼이 안
+            // 살아나고, 날짜가 아니면 보내기 전에 잡아 준다
+            obscureText: true,
+            keyboardType: TextInputType.number,
+            inputFormatters: [
+              FilteringTextInputFormatter.digitsOnly,
+              // maxLength 를 안 쓰는 이유: 입력창 아래 카운터가 붙어 칸 높이가 는다
+              LengthLimitingTextInputFormatter(_birthLength),
+            ],
+            onSubmitted: _canSubmit ? (_) => _submit() : null,
+          ),
+
+        const SizedBox(height: AppSpace.s3),
+        _ways(),
+
+        if (_linkSent) ...[
+          const SizedBox(height: AppSpace.s3),
+          const _LinkSentNote(),
+        ],
+
         // 실패 문구는 버튼 위 (담당자 탭과 같은 이유)
         if (_error != null) ...[
           const SizedBox(height: AppSpace.s4),
@@ -869,6 +964,66 @@ class _ApplicantFormState extends State<_ApplicantForm> {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// 글자 링크. **판을 그리지 않는다** — 이 화면의 채운 버튼은 「로그인」 하나다
+/// (05-design §1)
+class _WayLink extends StatelessWidget {
+  const _WayLink({required this.label, required this.onTap});
+
+  final String label;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: const BorderRadius.all(Radius.circular(6)),
+      child: Padding(
+        // 글자만으로는 터치 타깃이 모자란다 (05-design §9)
+        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 2),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontFamily: AppType.fontFamily,
+            fontSize: AppType.caption,
+            fontWeight: AppType.wSemiBold,
+            decoration: TextDecoration.underline,
+            color: onTap == null
+                ? AppColors.textSub
+                : AppColors.accentText,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 링크를 보냈다는 안내. **「그런 이메일은 없습니다」를 쓰지 않는다** — 서버가
+/// 지원 이력과 무관하게 202 를 주는 것과 같은 이유다(ADR-0033)
+class _LinkSentNote extends StatelessWidget {
+  const _LinkSentNote();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(AppSpace.s3),
+      decoration: const BoxDecoration(
+        borderRadius: BorderRadius.all(Radius.circular(12)),
+        color: AppColors.bgSunken,
+      ),
+      child: const Text(
+        '메일을 보냈습니다. 지원할 때 쓰신 이메일이라면 링크가 도착합니다.\n'
+        '링크는 웹에서 열리고, 7일 동안 쓸 수 있습니다.',
+        style: TextStyle(
+          fontFamily: AppType.fontFamily,
+          fontSize: AppType.caption,
+          height: 1.5,
+          color: AppColors.textSub,
+        ),
+      ),
     );
   }
 }

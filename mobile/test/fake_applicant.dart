@@ -59,6 +59,27 @@ class FakeApplicantPortalRepository implements ApplicantPortalRepository {
   }
 
   @override
+  Future<void> loginWithPassword({
+    required String email,
+    required String password,
+  }) async {
+    calls.add('loginWithPassword:$email:$password');
+    if (loginError != null) throw loginError!;
+    token = 'fake-applicant-token';
+  }
+
+  @override
+  Future<void> requestPasswordSetup({required String email}) async {
+    calls.add('requestPasswordSetup:$email');
+    // **여기서 던지지 않는다** — 서버가 지원 이력과 무관하게 202 를 준다.
+    // 실패를 보고 싶은 시험은 [setupError] 를 준다
+    if (setupError != null) throw setupError!;
+  }
+
+  /// 설정 링크 요청이 이걸로 실패한다. 화면이 그래도 같은 문구를 쓰는지 본다
+  ApiError? setupError;
+
+  @override
   Future<ApplicantMe> me() async {
     calls.add('me');
     if (meError != null) throw meError!;
