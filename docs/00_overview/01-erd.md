@@ -1,6 +1,7 @@
 # 01. 테이블 정의서 (ERD)
 
-> **상태: 확정 v2.3 · 2026-09-11** — v2.3: `interview_findings.turn_id` 추가 — 서류 대조를 **답변마다** 만들어 그 답변에 붙인다(담당자 화상 방이 답변 밑에 띄운다). NULL 허용이라 기존 행 영향 없음. **alembic `0019`**. 같은 날 `interview_turns.answered_at`(**alembic `0018`**)도 들어갔다 — 표에만 반영돼 있던 것을 여기 함께 적는다.
+> **상태: 확정 v2.4 · 2026-09-16** — v2.4: 지원자 비밀번호 로그인 2테이블 `applicant_credentials`·`applicant_password_tokens` 추가 ([ADR-0033](../03_decision/0033-지원자-앱-로그인.md) 개정). 신규 테이블만 만들므로 기존 행 영향 없음. **alembic `0023`**.
+> v2.3 · 2026-09-11 — v2.3: `interview_findings.turn_id` 추가 — 서류 대조를 **답변마다** 만들어 그 답변에 붙인다(담당자 화상 방이 답변 밑에 띄운다). NULL 허용이라 기존 행 영향 없음. **alembic `0019`**. 같은 날 `interview_turns.answered_at`(**alembic `0018`**)도 들어갔다 — 표에만 반영돼 있던 것을 여기 함께 적는다.
 > v2.2 · 2026-09-10 — v2.2: **자동 심사**([ADR-0034](../03_decision/0034-에이전트-자동심사.md)). `job_postings.pass_threshold`·`screening_mode`, 신규 `posting_interviewers`(공고별 기본 면접관 풀), `applications.doc_score`·`doc_score_detail`·`doc_decision`·`doc_decided_at`·`decision_source`, `interview_sessions.ai_score`·`ai_score_detail`·`truth_samples`·`scored_at`, `company_profile.scoring_weights`·`talent_profile`. 전부 NULL 허용 또는 기본값이라 기존 행 영향 없음. **alembic `0016`**. 0013·0014 가 만든 `company_profile`·공고 상세 컬럼도 이 판에서 문서에 반영했다(코드가 먼저였다).
 > v2.1 · 2026-09-04 — v2.1: `chain_publications.proof` 추가(OpenTimestamps 증명 보관 — EVM 체인(운영 Sepolia)은 `tx_hash` 만 있으면 되지만 OTS 는 증명 파일이 근거다) + `(network, chain_hash)` 부분 유일 인덱스로 **같은 머리를 같은 네트워크에 두 번 올리는 것**만 막는다. **alembic `0009`**.
 > v2.0 · 2026-09-04 — v2.0: 사슬 머리를 공개 체인에 못 박은 기록 `chain_publications` 추가, `document_anchors` 의 `ots_status`·`ots_proof` **제거**(아무도 쓴 적 없는 칸이고, 열려 있으면 그게 원장의 유일한 구멍이 된다). 이제 `document_anchors` 는 **UPDATE 가 아예 안 되는 표**다. **alembic `0008`** ([ADR-0028](../03_decision/0028-제출물-무결성-앵커.md) 2단계).
@@ -476,3 +477,34 @@ UNIQUE(job_posting_id, user_id).
 | created_at | timestamptz | NOT NULL | |
 
 - 문항은 DB 가 아니라 **코드 상수**다 (`backend/app/aptitude_questions.py`, 10문항·5카테고리). 문항 편집 UI 는 만들지 않는다 (ADR-0027 결정 2)
+
+## applicant_credentials — 지원자 로그인 비밀번호 (v2.4)
+
+지원자가 `/my` 에 들어올 때 쓰는 비밀번호. **없으면 아직 안 정한 것**이고 그때는 생년월일로 들어온다([ADR-0033](../03_decision/0033-지원자-앱-로그인.md) 2026-09-16 개정).
+
+| 컬럼 | 타입 | 제약 | 설명 |
+|---|---|---|---|
+| email | varchar(255) | PK | 소문자 정규화. **사람 단위 키** |
+| password_hash | varchar(255) | NOT NULL | bcrypt. `users.password_hash` 와 같은 방식 |
+| created_at | timestamptz | NOT NULL | |
+| updated_at | timestamptz | NOT NULL | |
+
+- **`applications` 에 얹지 않았다.** 비밀번호는 사람(이메일) 단위인데 지원은 여러 건이다 — 지원서마다 두면 같은 사람이 공고 둘에 냈을 때 비밀번호가 두 벌 생기고, 한쪽에서 바꾸면 다른 쪽이 옛 것이 된다
+- **이 행이 생기면 그 계정은 생년월일로 못 들어온다.** 둘 다 열어 두면 약한 쪽으로 들어온다 — 생년월일은 SNS·이력서로 알 수 있는 값이라 비밀번호를 정한 의미가 없어진다
+
+## applicant_password_tokens — 비밀번호 설정·재설정 링크 (v2.4)
+
+접수 메일·재발급 요청으로 나가는 일회용 링크. **처음 정할 때와 잊었을 때가 같은 경로다.**
+
+| 컬럼 | 타입 | 제약 | 설명 |
+|---|---|---|---|
+| id | bigint | PK | |
+| email | varchar(255) | NOT NULL, INDEX | 소문자 정규화 |
+| token_hash | varchar(255) | NOT NULL | **bcrypt 해시만 저장.** 원본은 메일 본문에만 있다 |
+| expires_at | timestamptz | NOT NULL | 기본 7일 (`APPLICANT_PASSWORD_TOKEN_DAYS`) |
+| used_at | timestamptz | NULL 허용 | 한 번 쓰면 죽는다. 재발급하면 그 이메일의 살아 있는 토큰이 전부 여기 찍힌다 |
+| created_at | timestamptz | NOT NULL | |
+
+- **조회 링크(일정·인적성·면접)와 저장 방식이 다르다.** 그쪽은 평문이다 — 새어 봐야 "내 지원 현황이 보인다" 지만, **이 링크가 새면 계정이 통째로 넘어간다.** 그래서 회사 API 키(`integration_clients.api_key_hash`)와 같은 무게로 다룬다
+- 해시는 O(1) 조회가 안 된다. 링크를 열 때는 살아 있는 토큰만 훑어 대조한다 — 만료·사용된 것은 대조 대상에서 빠져 순회가 짧게 유지된다
+- **행을 지우지 않는다.** "이미 쓴 링크" 와 "없는 링크" 를 서버 로그에서 가를 수 있어야 한다. 지원자에게는 둘 다 같은 문구(410 「만료됐거나 이미 사용한 링크입니다」)로 답한다

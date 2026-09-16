@@ -35,6 +35,42 @@ AGENT_NAME = "아르"
 # 오타 하나가 지원자에게 그대로 나가는 것을 저장 시점에 막는다.
 TEMPLATE_VARS = ("{지원자명}", "{공고명}", "{회사명}", "{면접일시}", "{서명}")
 
+# ── 비밀번호 설정 링크 (2026-09-16, ADR-0033 개정) ─────────────────────
+#
+# **담당자가 편집하는 문구가 아니다.** 단계 메일(`_TEMPLATES`)은 회사가 말투를
+# 바꿔 쓰는 자리지만, 이 메일은 링크 하나를 전달하는 기능성 메일이고 문구를 잘못
+# 고치면 지원자가 계정을 못 연다. 그래서 DB 템플릿 경로를 타지 않는다.
+PASSWORD_SETUP_SUBJECT = "[{회사명}] 지원 현황 조회 비밀번호를 정해 주세요"
+
+_PASSWORD_SETUP_BODY = """안녕하세요.
+
+{회사명} 채용에 지원해 주셔서 감사합니다.
+아래 링크에서 비밀번호를 정하시면, 그 뒤로는 **이메일과 비밀번호**로 지원 현황을
+확인하실 수 있습니다.
+
+{링크}
+
+- 이 링크는 **{유효기간}일 동안, 한 번만** 쓸 수 있습니다.
+- 기한이 지났다면 로그인 화면에서 「설정 링크 다시 받기」를 눌러 주세요.
+- 본인이 요청하지 않으셨다면 이 메일은 무시하셔도 됩니다.
+
+{서명}"""
+
+
+def render_password_setup(db, url: str) -> tuple[str, str]:
+    """비밀번호 설정 메일의 (제목, 본문)."""
+    from app.hiring.company import name_for  # 순환 import 방지
+    from app.talent.applicant_password import TOKEN_DAYS
+
+    company_name = name_for(db)
+    values = {
+        "회사명": company_name,
+        "링크": url,
+        "유효기간": str(TOKEN_DAYS),
+        "서명": build_signature("applied", "system", None, company_name=company_name),
+    }
+    return fill(PASSWORD_SETUP_SUBJECT, values), fill(_PASSWORD_SETUP_BODY, values)
+
 # 면접 일시도 스키마에 없다 (job_postings·applications 어디에도 컬럼이 없다).
 # 문구에서 그 자리는 비워 둘 수 없으므로 아래 문자열로 채우고, 컬럼이 생기면 바꾼다.
 INTERVIEW_AT_UNKNOWN = "별도 안내"

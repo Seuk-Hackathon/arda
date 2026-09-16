@@ -15,7 +15,35 @@ class ApplicantLoginRequest(BaseModel):
     """
 
     email: str = Field(min_length=3, max_length=255)
-    birth_date: str = Field(min_length=8, max_length=8, description="YYYYMMDD")
+    # 2026-09-16: **둘 중 하나**를 보낸다. 비밀번호를 정한 계정은 생년월일로 못
+    # 들어온다 — 둘 다 열어 두면 약한 쪽으로 들어오고, 생년월일은 SNS·이력서로
+    # 알 수 있는 값이라 비밀번호를 정한 의미가 없어진다 (ADR-0033 개정).
+    birth_date: str | None = Field(default=None, min_length=8, max_length=8,
+                                   description="YYYYMMDD")
+    password: str | None = Field(default=None, min_length=1, max_length=200)
+
+
+class PasswordSetupRequest(BaseModel):
+    """설정 링크를 메일로 받는다. **있고 없고를 알려 주지 않는다** — 항상 200."""
+
+    email: str = Field(min_length=3, max_length=255)
+
+
+class PasswordTokenOut(BaseModel):
+    """링크를 열었을 때 — 화면이 "어느 계정인지" 를 보여 줘야 한다."""
+
+    email: str
+
+
+class SetPasswordRequest(BaseModel):
+    """비밀번호를 정한다.
+
+    **길이 상한이 두 개인 이유**: 글자 수(64)와 UTF-8 바이트(72)를 같이 본다.
+    bcrypt 는 72 바이트를 넘는 입력을 말없이 잘라, 한글 25자부터는 뒤를 무엇으로
+    치든 같은 비밀번호가 된다. 자르는 것보다 거절하는 편이 낫다.
+    """
+
+    password: str = Field(min_length=8, max_length=64)
 
 
 class ApplicantLoginResponse(BaseModel):
