@@ -428,11 +428,7 @@ class FakeSettingsRepository implements SettingsRepository {
 
 /// 대시보드 — 목데이터로 같은 모양을 만들어 준다 (큐 8 4단계, 2026-09-03).
 class FakeDashboardRepository implements DashboardRepository {
-  FakeDashboardRepository({
-    this.data,
-    this.error,
-    this.delay = Duration.zero,
-  });
+  FakeDashboardRepository({this.data, this.error, this.delay = Duration.zero});
 
   final DashboardData? data;
   final Object? error;

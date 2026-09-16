@@ -475,8 +475,10 @@ class _TodayHero extends StatelessWidget {
   /// 지금 이후로 가장 가까운 면접. 이번 주에 없으면 null
   Interview? get _next {
     final now = DateTime.now();
-    final later = [for (final i in week) if (i.startAt.isAfter(now)) i]
-      ..sort((a, b) => a.startAt.compareTo(b.startAt));
+    final later = [
+      for (final i in week)
+        if (i.startAt.isAfter(now)) i,
+    ]..sort((a, b) => a.startAt.compareTo(b.startAt));
     return later.isEmpty ? null : later.first;
   }
 
@@ -514,9 +516,7 @@ class _TodayHero extends StatelessWidget {
           ),
           const SizedBox(height: AppSpace.s1),
           Text(
-            hasToday
-                ? '면접 ${today.length}건이 있어요'
-                : '면접이 없는 날이에요',
+            hasToday ? '면접 ${today.length}건이 있어요' : '면접이 없는 날이에요',
             style: const TextStyle(
               fontFamily: AppType.fontFamily,
               fontSize: 22,
@@ -573,11 +573,7 @@ class _TodayHero extends StatelessWidget {
 /// **이 화면에서 채운 버튼은 이것 하나다.** 2026-09-15 까지 그 자리는
 /// 「평가하러 가기」였다(평가 현황과 함께 없어졌다). §1: 주 동작 버튼은 흰 판.
 class _LeadRow extends StatelessWidget {
-  const _LeadRow({
-    required this.interview,
-    required this.sameDay,
-    this.onOpen,
-  });
+  const _LeadRow({required this.interview, required this.sameDay, this.onOpen});
 
   final Interview interview;
 

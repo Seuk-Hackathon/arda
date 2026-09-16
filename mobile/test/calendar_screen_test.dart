@@ -27,8 +27,17 @@ void main() {
     await tester.pumpWidget(host());
     await tester.pumpAndSettle();
 
+    // **스트립 안에서만 센다** — 2026-09-15 에 생긴 「이번 주 다른 날」 블록에도
+    // 날짜마다 요일이 붙어, 화면 전체에서 세면 둘이 잡힌다
     for (final label in ['일', '월', '화', '수', '목', '금', '토']) {
-      expect(find.text(label), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byKey(weekStripKey),
+          matching: find.text(label),
+        ),
+        findsOneWidget,
+        reason: label,
+      );
     }
     // 2026-08-30(일) ~ 09-05(토)
     final sunday = startOfWeek(tuesday);
@@ -100,7 +109,11 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('0건'), findsOneWidget);
-    expect(find.text('면접 없음'), findsOneWidget);
+    // 2026-09-15: 큰 빈 상자에서 한 줄로 바꿨다. 아래에 「이번 주 다른 날」이
+    // 이어지므로 여기서 면을 그릴 이유가 없다
+    expect(find.text('이 날은 면접이 없어요.'), findsOneWidget);
+    // 그 주에 면접이 있으면 다른 날을 보여 준다 — 화면이 통째로 비지 않는다
+    expect(find.text('이번 주 다른 날'), findsOneWidget);
   });
 
   testWidgets('같은 시각 두 건이면 시각은 첫 행에만 (캘린더 절 슬롯 묶기)', (tester) async {
@@ -204,7 +217,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('김도현'));
+    // **그날 목록 안의 행을 누른다.** 2026-09-15 에 생긴 「이번 주 다른 날」에도
+    // 같은 사람이 나올 수 있어 화면 전체에서 찾으면 여럿이 잡힌다
+    await tester.tap(find.text('김도현').first);
     await tester.pumpAndSettle();
 
     expect(find.text('상세 화면'), findsOneWidget);
