@@ -51,40 +51,41 @@ export default function Login() {
   const sceneRef = useRef<SceneHandle | null>(null)
 
   /* 심사자 자동 로그인 (박제 온프레미스 전용 · 2026-09-16).
-     URL 쿼리 `?demo=staff` → 담당자 자동 로그인, `?demo=applicant` → 지원자 자동 로그인.
-     심사자에게 이 URL 을 그대로 안내하면 별도 입력 없이 각 화면 진입. */
+     페이지 안 버튼 · URL 쿼리 두 방식 지원. */
+  async function demoLoginStaff() {
+    try {
+      setError(null)
+      setPending(true)
+      await login('ssuvisdev@gmail.com', 'arda12!@')
+      navigate('/dashboard', { replace: true })
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : '자동 로그인 실패')
+      setPending(false)
+    }
+  }
+  async function demoLoginApplicant() {
+    try {
+      setError(null)
+      setRole('applicant')
+      setPending(true)
+      const res = await applicantAuth.login('demo-applicant@arda.local', '19980315')
+      setApplicantToken(res.access_token)
+      navigate('/my', { replace: true })
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : '자동 로그인 실패')
+      setPending(false)
+    }
+  }
   const demoTriggered = useRef(false)
   useEffect(() => {
     if (demoTriggered.current) return
     const demo = new URLSearchParams(window.location.search).get('demo')
     if (!demo) return
     demoTriggered.current = true
-    if (demo === 'staff') {
-      (async () => {
-        try {
-          setPending(true)
-          await login('ssuvisdev@gmail.com', 'arda12!@')
-          navigate('/dashboard', { replace: true })
-        } catch (err) {
-          setError(err instanceof ApiError ? err.message : '자동 로그인 실패')
-          setPending(false)
-        }
-      })()
-    } else if (demo === 'applicant') {
-      (async () => {
-        try {
-          setRole('applicant')
-          setPending(true)
-          const res = await applicantAuth.login('demo-applicant@arda.local', '19980315')
-          setApplicantToken(res.access_token)
-          navigate('/my', { replace: true })
-        } catch (err) {
-          setError(err instanceof ApiError ? err.message : '자동 로그인 실패')
-          setPending(false)
-        }
-      })()
-    }
-  }, [login, navigate])
+    if (demo === 'staff') demoLoginStaff()
+    else if (demo === 'applicant') demoLoginApplicant()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   /* 이미 로그인된 사용자가 /login 에 오면 폼을 또 보여주지 않는다.
      pending 중엔 제외 — login() 직후 setUser 가 먼저 돌면 handleSubmit 의
@@ -242,6 +243,38 @@ export default function Login() {
           <button type="submit" className="btn btn-primary" style={{ width: '100%' }} disabled={disabled}>
             {pending ? '로그인 중…' : '로그인'}
           </button>
+
+          {/* 심사자용 데모 자동 로그인 (박제 온프레미스 전용) */}
+          <div style={{
+            marginTop: 24,
+            paddingTop: 16,
+            borderTop: '1px solid rgba(255,255,255,0.08)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 8,
+          }}>
+            <p style={{ margin: 0, fontSize: 12, color: 'rgba(255,255,255,0.5)', textAlign: 'center' }}>
+              심사자 데모 · 별도 입력 없이 즉시 진입
+            </p>
+            <button
+              type="button"
+              className="btn"
+              style={{ width: '100%', background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.85)' }}
+              onClick={demoLoginStaff}
+              disabled={pending}
+            >
+              담당자 데모 로그인
+            </button>
+            <button
+              type="button"
+              className="btn"
+              style={{ width: '100%', background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.85)' }}
+              onClick={demoLoginApplicant}
+              disabled={pending}
+            >
+              지원자 데모 로그인
+            </button>
+          </div>
         </form>
       </div>
 
