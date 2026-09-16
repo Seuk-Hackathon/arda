@@ -654,3 +654,49 @@ class TestPasswordLogin:
         ).all()
         assert len(rows) == 1
         assert rows[0].token_hash != ""
+
+
+class TestPasswordMail:
+    """설정 링크 메일이 **실제로 큐에 실리는지** (2026-09-16).
+
+    처음 판에서 이 경로를 통째로 mock 해 두는 바람에 **운영에서 막혔다** —
+    `ck_email_logs_stage` 가 `password_setup` 을 거부해 INSERT 가 실패했고,
+    백그라운드 작업이라 요청은 202 로 끝나 아무도 몰랐다. 지원자는 메일을 영영
+    못 받는다. 그래서 여기서는 **보내는 함수를 그대로 돌리고** 발행만 막는다.
+    """
+
+    def test_행이_생기고_큐로_나간다(
+        self, db: Session, application: Application, monkeypatch
+    ):
+        from app.models import EmailLog
+        from app.talent.api import applicant_auth as mod
+
+        a = _applicant(db, application)
+        db.commit()
+        monkeypatch.setattr("app.db.SessionLocal", lambda: _SameSession(db))
+        published: list[int] = []
+        monkeypatch.setattr("app.shared.mail.publish", lambda log_id: published.append(log_id))
+
+        mod._send_password_mail(a.id, a.email, "https://seuk.test/set-password/tok")
+
+        row = db.scalars(
+            select(EmailLog).where(EmailLog.stage == "password_setup")
+        ).first()
+        assert row is not None, "메일 행이 안 생겼다 — 지원자는 링크를 못 받는다"
+        assert row.to_email == a.email
+        assert "set-password/tok" in (row.body or ""), "본문에 링크가 없다"
+        assert row.subject, "제목이 비었다"
+        assert published == [row.id], "큐로 안 나갔다"
+
+
+class _SameSession:
+    """`with SessionLocal() as db:` 안에서 테스트 세션을 그대로 쓰게 한다."""
+
+    def __init__(self, db: Session):
+        self._db = db
+
+    def __enter__(self) -> Session:
+        return self._db
+
+    def __exit__(self, *exc) -> None:
+        return None
