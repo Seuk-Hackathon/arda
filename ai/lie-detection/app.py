@@ -347,8 +347,8 @@ async def interview(ws: WebSocket, token: str):
                     # 잇는 중" 이 반복됐는데 서버 로그에 아무것도 없어 누가 끊었는지 못 갈랐다.
                     # 1000·1001 은 앱이 닫은 것, 1006 은 망이 끊긴 것, 1011 은 서버가 버거운 것
                     logger.info(
-                        "면접 연결 끊김: token=%s code=%s",
-                        token[:8], msg.get("code"),
+                        "면접 연결 끊김: token=%s code=%s %s",
+                        token[:8], msg.get("code"), _frame_tally(session),
                     )
                     break
 
@@ -364,9 +364,28 @@ async def interview(ws: WebSocket, token: str):
         except WebSocketDisconnect:
             # 연결이 끊긴 것 자체는 오류가 아니다. 답변은 백엔드에 이미 저장돼 있고,
             # 지원자가 다시 들어오면 안 한 질문부터 이어진다.
-            logger.info("면접 연결 종료: token=%s", token[:8])
+            logger.info("면접 연결 종료: token=%s %s", token[:8], _frame_tally(session))
         except Exception:
             logger.exception("면접 처리 중 오류: token=%s", token[:8])
+
+
+def _frame_tally(session: InterviewSession) -> str:
+    """이 면접 하나의 프레임 장부를 로그 한 줄로 (2026-09-16, 앱 오너 요청).
+
+    `/health` 의 `frames` 는 **프로세스 전역 누적**이라 면접이 겹치거나 컨테이너가
+    다시 뜨면 어느 면접의 숫자인지 알 수 없다. 앱 화면의 「얼굴 N · 실패 M」 과
+    나란히 놓고 **「앱이 안 보낸 것」과 「서버가 못 찾은 것」을 가르려면** 한 면접
+    안의 숫자여야 한다. 토큰 앞 8자가 같은 줄에 있어 세션과 바로 짝지어진다.
+
+    읽는 법: `recv` 는 소켓이 받은 장수(앱의 전송 수와 맞춰 본다) · `dropped_busy`
+    는 서버가 앞 장을 보는 중이라 버린 것 · `in` 은 분석에 들어간 것 · `face` 는
+    얼굴을 찾은 것. `recv=0` 이면 앱, `face=0` 인데 `in>0` 이면 서버 쪽이다.
+    """
+    s = session.frame_stats
+    return (
+        f"프레임 recv={s['recv']} 버림={s['dropped_busy']} "
+        f"분석={s['in']} 얼굴={s['face']}"
+    )
 
 
 async def _on_binary(ws, client, session: InterviewSession, data: bytes) -> None:
@@ -377,12 +396,14 @@ async def _on_binary(ws, client, session: InterviewSession, data: bytes) -> None
         # "안 온 것"과 구별되지 않는다 — 2026-09-10 실측에서 `in=0` 을 보고도
         # 앱이 안 보낸 것인지 서버가 버린 것인지 갈리지 않았다.
         iw.FRAME_STATS["recv"] += 1
+        session.frame_stats["recv"] += 1
 
         # `/ws/live` 와 같은 이유로 스레드에서, 도는 중이면 버린다 (`add_frame` 의
         # FRAME_STRIDE 는 그 안에서 그대로 적용된다). 프레임 하나가 mediapipe 를
         # 두 번(특징 + 얼굴 대조) 타므로 이벤트 루프에서 부르면 오디오까지 늦는다.
         if session.face_busy:
             iw.FRAME_STATS["dropped_busy"] += 1
+            session.frame_stats["dropped_busy"] += 1
         if not session.face_busy:
             session.face_busy = True
 
@@ -524,6 +545,25 @@ async def _end_answer(ws, client, session: InterviewSession) -> None:
         "전사 끝: token=%s seq=%s 소리 %.1f초 · %d자",
         session.token[:8], seq, seconds, len(transcript),
     )
+
+    # **받아쓰지 못했으면 음성이라도 남긴다** (2026-09-16). 자리표시자만 저장하면
+    # 지원자가 한 말이 어디에도 없다 — 세션 75 가 그랬다(ADR-0038). 담당자가
+    # 나중에 「다시 받아쓰기」를 누르면 이 음성으로 글을 채운다.
+    #
+    # **실패해도 면접은 그대로 간다** — 못 남기면 지금까지와 같은 상태일 뿐이라
+    # 여기서 답변 저장을 막으면 잃는 것이 오히려 커진다.
+    if iw.is_placeholder(transcript):
+        try:
+            key = await iw.preserve_audio(client, session.token, seq, pcm)
+            logger.info(
+                "전사 실패 — 음성을 남겼다: token=%s seq=%s key=%s",
+                session.token[:8], seq, key,
+            )
+        except Exception:
+            logger.exception(
+                "음성 보존 실패: token=%s seq=%s — 자리표시자만 남는다",
+                session.token[:8], seq,
+            )
     signal = session.signal(rows)
     if signal:
         logger.info("표정 신호: token=%s %s", session.token[:8], signal)

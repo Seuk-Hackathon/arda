@@ -113,9 +113,15 @@ class TestSession:
         assert again == b""
 
     def test_프레임이_적으면_신호를_내지_않는다(self):
-        """없는 것이 틀린 것보다 낫다."""
+        """없는 것이 틀린 것보다 낫다.
+
+        **하한은 3장이다** — `ebf7cf6`(2026-09-15)이 `FRAME_STRIDE` 를 3→1 로
+        내리면서 5→3 으로 같이 낮췄다. 그때 이 테스트를 안 고쳐 main 이 깨진 채로
+        굴러다녔다(CI 가 `ai/` 를 안 돌린다). 경계 두 개를 같이 본다.
+        """
         s = InterviewSession("tok")
-        assert s.signal([[0.3] * 7 for _ in range(4)]) is None
+        assert s.signal([[0.3] * 7 for _ in range(2)]) is None
+        assert s.signal([[0.3] * 7 for _ in range(3)]) is not None
 
     def test_프레임이_충분하면_신호를_낸다(self):
         s = InterviewSession("tok")
@@ -696,3 +702,128 @@ class TestHint:
         monkeypatch.setattr(iw, "_run_transcribe", fake)
         assert iw.transcribe(_pcm(3000) * 20, "쿼리 튜닝은?") == "답변"
         assert seen["hint"] == "쿼리 튜닝은?"
+
+
+class TestPreserveAudio:
+    """전사에 실패한 답변의 음성을 남긴다 (2026-09-16, ADR-0038 후속).
+
+    2026-09-15 세션 75 에서 전사가 상한을 넘겨 `[전사 지연 · 발화 43.9초]` 만
+    저장됐고, **지원자가 한 말은 어디에도 없었다.** 실시간 경로는 음성을 메모리에만
+    두고 흘려보내기 때문이다. 받아쓰지 못한 답변에 한해 그 음성을 올려 둔다.
+    """
+
+    class _Client:
+        """`httpx.AsyncClient` 흉내. 부른 순서를 그대로 남긴다."""
+
+        def __init__(self, fail_at: str | None = None):
+            self.calls: list[tuple[str, str]] = []
+            self.fail_at = fail_at
+
+        def _resp(self, payload: dict):
+            outer = self
+
+            class R:
+                def raise_for_status(self):
+                    pass
+
+                def json(self):
+                    return payload
+
+            return R()
+
+        async def post(self, url, json=None, headers=None, timeout=None):
+            self.calls.append(("POST", url))
+            if self.fail_at and self.fail_at in url:
+                raise RuntimeError("망 끊김")
+            if "audio-upload-url" in url:
+                return self._resp(
+                    {
+                        "upload_url": "https://s3.example/put",
+                        "s3_key": "interviews/uuid/answer.wav",
+                        "expires_in": 600,
+                    }
+                )
+            return self._resp({"seq": 3, "audio_s3_key": "interviews/uuid/answer.wav"})
+
+        async def put(self, url, content=None, headers=None, timeout=None):
+            self.calls.append(("PUT", url))
+            if self.fail_at and self.fail_at in url:
+                raise RuntimeError("업로드 실패")
+            return self._resp({})
+
+    def test_자리표시자를_알아본다(self):
+        assert iw.is_placeholder("[전사 지연 · 발화 43.9초]")
+        assert iw.is_placeholder("[전사 불가 · 발화 8.9초]")
+        assert iw.is_placeholder("[전사 꺼짐 · 발화 2.0초]")
+        assert not iw.is_placeholder("결제 정산 API 를 맡았습니다")
+        assert not iw.is_placeholder("")
+        assert not iw.is_placeholder(None)
+
+    def test_발급_업로드_붙이기_순서로_부른다(self, monkeypatch):
+        monkeypatch.setattr(iw, "SERVICE_TOKEN", "svc")
+        client = self._Client()
+
+        key = asyncio.run(iw.preserve_audio(client, "tok", 3, _pcm(16000)))
+
+        assert key == "interviews/uuid/answer.wav"
+        assert [c[0] for c in client.calls] == ["POST", "PUT", "POST"]
+        assert "audio-upload-url" in client.calls[0][1]
+        assert client.calls[1][1] == "https://s3.example/put"
+        assert client.calls[2][1].endswith("/turns/3/audio")
+
+    def test_번호를_모르면_올리지_않는다(self, monkeypatch):
+        """어느 회차에 붙일지 모르는 파일은 주인 없는 파일이 된다."""
+        monkeypatch.setattr(iw, "SERVICE_TOKEN", "svc")
+        client = self._Client()
+
+        assert asyncio.run(iw.preserve_audio(client, "tok", None, _pcm(16000))) is None
+        assert client.calls == []
+
+    def test_서비스_토큰이_없으면_올리지_않는다(self, monkeypatch):
+        """붙이는 경로가 막혀 있는데 올리기만 하면 S3 에 쓰레기가 남는다."""
+        monkeypatch.setattr(iw, "SERVICE_TOKEN", "")
+        client = self._Client()
+
+        assert asyncio.run(iw.preserve_audio(client, "tok", 3, _pcm(16000))) is None
+        assert client.calls == []
+
+    def test_업로드가_실패하면_예외가_올라간다(self, monkeypatch):
+        """부르는 쪽(app.py)이 감싸서 면접은 그대로 가게 한다 — 여기서는 숨기지 않는다."""
+        monkeypatch.setattr(iw, "SERVICE_TOKEN", "svc")
+        client = self._Client(fail_at="s3.example")
+
+        with pytest.raises(RuntimeError):
+            asyncio.run(iw.preserve_audio(client, "tok", 3, _pcm(16000)))
+
+
+class TestSessionFrameStats:
+    """면접 하나의 프레임 장부 (2026-09-16, 앱 오너 요청).
+
+    `/health` 의 `frames` 는 프로세스 전역이라 면접이 겹치거나 컨테이너가 다시
+    뜨면 어느 면접의 숫자인지 모른다. 앱 화면의 「얼굴 N · 실패 M」 과 맞춰
+    **「앱이 안 보낸 것」과 「서버가 못 찾은 것」을 가르려면** 세션 단위여야 한다.
+    """
+
+    def test_세션마다_따로_센다(self, monkeypatch):
+        a = iw.InterviewSession("tok-a")
+        b = iw.InterviewSession("tok-b")
+        monkeypatch.setattr(iw, "face_row_search_full", lambda *_: (None, None, None))
+
+        a.add_frame(b"\xff\xd8fake")
+        a.add_frame(b"\xff\xd8fake")
+        b.add_frame(b"\xff\xd8fake")
+
+        assert a.frame_stats["in"] == 2
+        assert b.frame_stats["in"] == 1
+        assert a.frame_stats["face"] == 0
+
+    def test_얼굴을_찾으면_센다(self, monkeypatch):
+        s = iw.InterviewSession("tok")
+        monkeypatch.setattr(
+            iw, "face_row_search_full", lambda *_: ([0.0] * 7, 0, None)
+        )
+
+        s.add_frame(b"\xff\xd8fake")
+
+        assert s.frame_stats["in"] == 1
+        assert s.frame_stats["face"] == 1
