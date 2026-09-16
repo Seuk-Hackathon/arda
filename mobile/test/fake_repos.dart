@@ -428,11 +428,7 @@ class FakeSettingsRepository implements SettingsRepository {
 
 /// 대시보드 — 목데이터로 같은 모양을 만들어 준다 (큐 8 4단계, 2026-09-03).
 class FakeDashboardRepository implements DashboardRepository {
-  FakeDashboardRepository({
-    this.data,
-    this.error,
-    this.delay = Duration.zero,
-  });
+  FakeDashboardRepository({this.data, this.error, this.delay = Duration.zero});
 
   final DashboardData? data;
   final Object? error;
@@ -459,6 +455,10 @@ class FakeDashboardRepository implements DashboardRepository {
 
     return DashboardData(
       todayInterviews: mockInterviewsOn(day),
+      // 홈 히어로가 '이번 주 N건'·'가장 가까운 면접'을 여기서 읽는다
+      weekInterviews: [
+        for (final list in mockInterviewsInWeek(day).values) ...list,
+      ],
       openPostings: open,
       stageCounts: mockOpenStageCounts,
     );

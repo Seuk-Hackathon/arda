@@ -121,6 +121,17 @@ class _CalendarScreenState extends State<CalendarScreen> {
     };
     final selectedItems = _filter(week[_selected] ?? const [], myId);
 
+    // 고른 날을 뺀 나머지 중 면접이 있는 날만, 날짜순
+    final rest = [
+      for (final day in days)
+        if (day != _selected)
+          if (_filter(week[day] ?? const [], myId).isNotEmpty)
+            (day, _filter(week[day] ?? const [], myId)),
+    ];
+    final weekTotal =
+        selectedItems.length +
+        rest.fold(0, (sum, entry) => sum + entry.$2.length);
+
     return ListView(
       padding: const EdgeInsets.all(AppSpace.s4),
       children: [
@@ -144,10 +155,27 @@ class _CalendarScreenState extends State<CalendarScreen> {
         const SizedBox(height: AppSpace.s5),
         _DayHeader(day: _selected, count: selectedItems.length),
         const SizedBox(height: AppSpace.s2),
-        if (selectedItems.isEmpty)
+
+        // **빈 날이 이 화면의 기본 상태다** (2026-09-15). 면접은 한 주에 몇
+        // 건이고 나머지 날은 원래 비어 있다. 전에는 「면접 없음」 큰 상자 하나로
+        // 끝나 화면의 60% 가 검게 남았다(실기기에서 확인).
+        //
+        // 이번 주에 뭔가 있으면 아래에서 보여 주므로 여기서는 한 줄만 말하고,
+        // 이번 주가 통째로 비었을 때만 따로 안내한다.
+        if (selectedItems.isEmpty && weekTotal == 0)
+          _EmptyWeek(onNextWeek: () => _moveWeek(1))
+        else if (selectedItems.isEmpty)
           const _EmptyDay()
         else
           _DayList(items: selectedItems),
+
+        // 고른 날 말고 이번 주에 남은 것. **한 주치를 이미 받아 뒀다** —
+        // `_repo.week()` 로 받아 놓고 엿새를 버리고 있었다(같은 주 안에서
+        // 날짜만 옮길 때는 다시 받지도 않는다). 서버 호출이 안 늘어난다.
+        if (rest.isNotEmpty) ...[
+          const SizedBox(height: AppSpace.s5),
+          _RestOfWeek(days: rest, sameDayAsSelected: selectedItems.isNotEmpty),
+        ],
       ],
     );
   }
@@ -333,7 +361,6 @@ class _WeekStrip extends StatelessWidget {
                 count: countOf(days[i]),
                 isSelected: days[i] == selected,
                 isToday: days[i] == today,
-                isSunday: i == 0,
                 onTap: () => onSelect(days[i]),
               ),
             ),
@@ -351,7 +378,6 @@ class _DayCell extends StatelessWidget {
     required this.count,
     required this.isSelected,
     required this.isToday,
-    required this.isSunday,
     required this.onTap,
   });
 
@@ -360,81 +386,295 @@ class _DayCell extends StatelessWidget {
   final int count;
   final bool isSelected;
   final bool isToday;
-  final bool isSunday;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    // 일요일만 적갈 — 05-design §1 은 danger 를 "종료 신호"로 쓰지만 달력의
-    // 일요일 빨강은 사람들이 읽는 관습이라 같은 토큰을 빌려 쓴다. 새 색은 만들지 않는다
-    final baseColor = isSunday ? AppColors.danger : AppColors.text;
+    // **일요일 적갈을 뺐다** (2026-09-15). §1 은 적갈을 불합격·실패에만 쓴다.
+    // 종이 달력의 관습을 빌려 오느라 예외를 하나 만들어 뒀던 자리인데,
+    // 그 관습 때문에 "이 날 뭔가 잘못됐다"로 읽힐 여지가 더 컸다.
 
     return Semantics(
       button: true,
       selected: isSelected,
       label: '${formatDate(day)} 면접 $count건',
       excludeSemantics: true,
-      child: Material(
-        color: isSelected
-            ? AppColors.leaf
-            : isToday
-            ? AppColors.bgSunken
-            : Colors.transparent,
-        borderRadius: AppShape.ctl,
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: onTap,
-          highlightColor: AppColors.bgSunken,
-          splashColor: AppColors.bgSunken,
-          child: SizedBox(
-            // §9 터치 타깃 44
-            // 요일·날짜·건수 세 줄 + §9 터치 타깃 44. 44+12 로는 6px 넘친다
-            height: AppLayout.minTouchTarget + AppSpace.s5,
+      // **선택 표시를 한 톤 낮췄다** (2026-09-15). 전에는 밝은 시안 채움이라
+      // 화면에서 제일 센 요소였는데, 그 날이 0건일 때가 많아 "여기 뭔가 있다"로
+      // 잘못 읽혔다. 워시 + 아래 심지는 사이드바 활성 표시와 같은 언어다
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: isSelected
+              ? AppColors.accentSoft
+              : isToday
+              ? AppColors.bgSunken
+              : Colors.transparent,
+          borderRadius: AppShape.ctl,
+          border: isSelected
+              ? Border.all(color: AppColors.accent, width: AppShape.borderW)
+              : null,
+        ),
+        child: Material(
+          color: Colors.transparent,
+          borderRadius: AppShape.ctl,
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: onTap,
+            highlightColor: AppColors.bgSunken,
+            splashColor: AppColors.bgSunken,
+            child: SizedBox(
+              // §9 터치 타깃 44
+              // 요일·날짜·건수 세 줄 + §9 터치 타깃 44. 44+12 로는 6px 넘친다
+              height: AppLayout.minTouchTarget + AppSpace.s5,
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    weekdayLabel,
+                    style: TextStyle(
+                      fontFamily: AppType.fontFamily,
+                      fontSize: AppType.caption,
+                      color: AppColors.textSub,
+                    ),
+                  ),
+                  const SizedBox(height: AppSpace.s1),
+                  Text(
+                    '${day.day}',
+                    style: TextStyle(
+                      fontFamily: AppType.fontFamily,
+                      fontSize: AppType.num,
+                      fontWeight: isSelected || isToday
+                          ? AppType.wSemiBold
+                          : AppType.wRegular,
+                      fontFeatures: AppType.tabularNums,
+                      color: isSelected || isToday
+                          ? AppColors.text
+                          : AppColors.textSub,
+                    ),
+                  ),
+                  const SizedBox(height: AppSpace.s1),
+                  // **0 은 숫자로 안 찍는다** (2026-09-15). 일곱 칸에 0 이 줄지어
+                  // 서면 노이즈만 된다 — 웹 대시보드가 이미 쓰는 규칙이다
+                  // ("0 건인 날은 막대를 그리지 않는다. 없는 것과 적은 것은 다르다").
+                  // 자리는 점으로 남긴다: 빼 버리면 칸 높이가 날마다 달라진다
+                  SizedBox(
+                    height: AppType.caption + 2,
+                    child: count == 0
+                        ? Center(
+                            child: Container(
+                              width: 4,
+                              height: 4,
+                              decoration: const BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: AppColors.border,
+                              ),
+                            ),
+                          )
+                        : Text(
+                            '$count',
+                            style: const TextStyle(
+                              fontFamily: AppType.fontFamily,
+                              fontSize: AppType.caption,
+                              fontWeight: AppType.wSemiBold,
+                              fontFeatures: AppType.tabularNums,
+                              color: AppColors.accentText,
+                            ),
+                          ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 이번 주가 통째로 비었을 때.
+///
+/// **왜 비었는지와 다음에 뭘 할지를 말한다.** 화면이 "없다"만 말하고 끝나면
+/// 담당자는 앱이 고장 난 것인지 정말 없는 것인지 모른다. 일정은 지원자가
+/// 후보 시간에서 고를 때 잡히므로(ADR-0016) 이 화면에서 만들 수 있는 것이
+/// 없다 — 그 사실도 같이 적는다.
+class _EmptyWeek extends StatelessWidget {
+  const _EmptyWeek({required this.onNextWeek});
+
+  final VoidCallback onNextWeek;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(AppSpace.s4),
+      decoration: BoxDecoration(
+        borderRadius: AppShape.card,
+        border: Border.all(
+          color: AppColors.borderSoft,
+          width: AppShape.borderW,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            '이번 주는 면접이 없어요',
+            style: TextStyle(
+              fontFamily: AppType.fontFamily,
+              fontSize: AppType.sm,
+              fontWeight: AppType.wSemiBold,
+              color: AppColors.text,
+            ),
+          ),
+          const SizedBox(height: AppSpace.s1),
+          const Text(
+            '확정된 일정이 생기면 여기에 나타나요.\n'
+            '일정은 지원자가 후보 시간에서 고르면 잡힙니다.',
+            style: TextStyle(
+              fontFamily: AppType.fontFamily,
+              fontSize: AppType.caption,
+              height: 1.6,
+              color: AppColors.textSub,
+            ),
+          ),
+          const SizedBox(height: AppSpace.s3),
+          // §1: 주 동작 버튼은 흰 판 + 어두운 글자.
+          // **Align 으로 감싼다** — Container 에 alignment 를 주면 남는 폭을 다
+          // 먹어서 흰 판이 화면을 가로지른다(실기기에서 확인). 이 화면에서
+          // 제일 센 요소가 되면 안 된다
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Material(
+              color: AppColors.accentFill,
+              borderRadius: AppShape.ctl,
+              clipBehavior: Clip.antiAlias,
+              child: InkWell(
+                onTap: onNextWeek,
+                child: Container(
+                  constraints: const BoxConstraints(
+                    minHeight: AppLayout.minTouchTarget,
+                  ),
+                  padding: const EdgeInsets.symmetric(horizontal: AppSpace.s5),
+                  // **`alignment` 를 쓰면 안 된다** — Container 는 alignment 가
+                  // 있으면 받은 제약의 최대 폭을 먹어서 흰 판이 화면을 가로지른다
+                  // (Align 으로 감싸도 마찬가지다. 느슨한 제약의 최대가 화면 폭이다).
+                  // `widthFactor: 1` 이면 세로 가운데는 잡으면서 폭은 글자만큼이다
+                  child: const Center(
+                    widthFactor: 1,
+                    child: Text(
+                      '다음 주 보기',
+                      style: TextStyle(
+                        fontFamily: AppType.fontFamily,
+                        fontSize: AppType.caption,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.onAccent,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 고른 날을 뺀 이번 주의 나머지.
+///
+/// **한 주치를 이미 받아 두고 엿새를 버리고 있었다** — `_repo.week()` 가
+/// 일요일~토요일을 통째로 주는데 화면은 고른 날 하나만 그렸다. 서버 호출을
+/// 늘리지 않고 빈 자리를 채울 수 있는 유일한 재료다.
+///
+/// 05-design 캘린더 절의 "주간 스트립 + 그날 목록" 구조는 그대로다 — 이것은
+/// 그날 목록을 **대신하는 것이 아니라 아래에 더하는 것**이다.
+class _RestOfWeek extends StatelessWidget {
+  const _RestOfWeek({required this.days, required this.sameDayAsSelected});
+
+  /// (날짜, 그날 면접들). 날짜순으로 들어온다
+  final List<(DateTime, List<Interview>)> days;
+
+  /// 고른 날에도 면접이 있었는가. 제목 문구가 갈린다
+  final bool sameDayAsSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Text(
+              sameDayAsSelected ? '이번 주 남은 것' : '이번 주 다른 날',
+              style: const TextStyle(
+                fontFamily: AppType.fontFamily,
+                fontSize: AppType.caption,
+                fontWeight: AppType.wSemiBold,
+                letterSpacing: 0.4,
+                color: AppColors.textSub,
+              ),
+            ),
+            const SizedBox(width: AppSpace.s2),
+            const Expanded(
+              child: Divider(height: 1, color: AppColors.borderSoft),
+            ),
+          ],
+        ),
+        for (final (day, items) in days) ...[
+          const SizedBox(height: AppSpace.s3),
+          _RestDay(day: day, items: items),
+        ],
+      ],
+    );
+  }
+}
+
+/// 나머지 주의 하루 — 왼쪽에 날짜, 오른쪽에 그날 목록.
+class _RestDay extends StatelessWidget {
+  const _RestDay({required this.day, required this.items});
+
+  final DateTime day;
+  final List<Interview> items;
+
+  static const _labels = ['월', '화', '수', '목', '금', '토', '일'];
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: 40,
+          child: Padding(
+            padding: const EdgeInsets.only(top: AppSpace.s3),
             child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 Text(
-                  weekdayLabel,
-                  style: TextStyle(
-                    fontFamily: AppType.fontFamily,
-                    fontSize: AppType.caption,
-                    color: isSelected ? AppColors.bgElev : AppColors.textSub,
-                  ),
-                ),
-                const SizedBox(height: AppSpace.s1),
-                Text(
                   '${day.day}',
-                  style: TextStyle(
+                  style: const TextStyle(
                     fontFamily: AppType.fontFamily,
                     fontSize: AppType.num,
-                    fontWeight: isSelected || isToday
-                        ? AppType.wSemiBold
-                        : AppType.wRegular,
-                    fontFeatures: AppType.tabularNums,
-                    color: isSelected ? AppColors.bgElev : baseColor,
-                  ),
-                ),
-                const SizedBox(height: AppSpace.s1),
-                Text(
-                  '$count',
-                  style: TextStyle(
-                    fontFamily: AppType.fontFamily,
-                    fontSize: AppType.caption,
                     fontWeight: AppType.wSemiBold,
                     fontFeatures: AppType.tabularNums,
-                    // 0건은 테두리색까지 흐려 둔다 — 있는 날과 없는 날이 한눈에 갈려야 한다
-                    color: isSelected
-                        ? AppColors.bgElev
-                        : count == 0
-                        ? AppColors.border
-                        : AppColors.leaf,
+                    color: AppColors.text,
+                  ),
+                ),
+                Text(
+                  _labels[day.weekday - 1],
+                  style: const TextStyle(
+                    fontFamily: AppType.fontFamily,
+                    fontSize: 10,
+                    color: AppColors.textSub,
                   ),
                 ),
               ],
             ),
           ),
         ),
-      ),
+        const SizedBox(width: AppSpace.s2),
+        Expanded(child: _DayList(items: items)),
+      ],
     );
   }
 }
@@ -642,23 +882,20 @@ class _Row extends StatelessWidget {
 }
 
 /// 면접이 없는 날. 05-design §6 의 빈 상태 — 웹 대시보드가 쓰는 문구를 그대로 쓴다.
+/// 고른 날만 비었을 때 — **상자를 그리지 않는다** (2026-09-15).
+///
+/// 전에는 높이 100px 가 넘는 빈 카드였다. 비어 있다는 말을 하려고 큰 면을
+/// 그리면 허전함이 오히려 커진다. 아래에 이번 주 다른 날이 이어지므로
+/// 여기서는 한 줄이면 된다.
 class _EmptyDay extends StatelessWidget {
   const _EmptyDay();
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(vertical: AppSpace.s7),
-      decoration: BoxDecoration(
-        color: AppColors.bgElev,
-        borderRadius: AppShape.card,
-        border: Border.all(color: AppColors.border, width: AppShape.borderW),
-        boxShadow: AppShadow.card,
-      ),
-      child: const Text(
-        '면접 없음',
-        textAlign: TextAlign.center,
+    return const Padding(
+      padding: EdgeInsets.symmetric(vertical: AppSpace.s1),
+      child: Text(
+        '이 날은 면접이 없어요.',
         style: TextStyle(
           fontFamily: AppType.fontFamily,
           fontSize: AppType.sm,

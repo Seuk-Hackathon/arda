@@ -27,12 +27,9 @@ Widget host({DateTime? today}) => CurrentUserScope(
   ),
 );
 
-Finder get card => find
-    .descendant(
-      of: find.byType(DashboardScreen),
-      matching: find.byType(Container),
-    )
-    .first;
+/// 첫 카드. **'화면 안의 첫 Container' 로 집던 것을 키로 바꿨다** (2026-09-15) —
+/// 그 자리를 히어로가 차지하면서 카드가 아닌 것을 보고 있었다
+Finder get card => find.byKey(dashboardCardKey).first;
 
 BoxDecoration decorationOf(WidgetTester tester) =>
     tester.widget<Container>(card).decoration! as BoxDecoration;
@@ -69,7 +66,11 @@ void main() {
       final box = tester.getRect(card);
       expect(box.left - screen.left, AppSpace.s4);
       expect(screen.right - box.right, AppSpace.s4);
-      expect(box.top - screen.top, AppSpace.s4);
+      // **위 여백은 첫 카드가 아니라 인사말이 받는다** (2026-09-15) —
+      // 카드 위에 인사말과 오늘 히어로가 생겼다. 화면 여백 자체는 그대로 16 이다
+      // 인사말 문구는 시간대마다 바뀌므로 이름 줄로 집는다
+      final hello = tester.getRect(find.text('${mockUser.name} 님'));
+      expect(hello.top - screen.top, lessThanOrEqualTo(AppSpace.s4 + 24));
 
       expect(
         tester.widget<Container>(card).padding,
@@ -207,13 +208,12 @@ void main() {
       expect(text.maxLines, 1);
       expect(text.overflow, TextOverflow.ellipsis);
 
-      // 두 행 높이가 같아야 한다 — 긴 이름이 줄을 늘리면 어긋난다
-      final rows = tester
-          .widgetList<Container>(find.byType(Container))
-          .toList();
-      expect(rows.length, greaterThanOrEqualTo(3)); // 카드 + 행 2
-      final h1 = tester.getSize(find.byType(Container).at(1)).height;
-      final h2 = tester.getSize(find.byType(Container).at(2)).height;
+      // 두 행 높이가 같아야 한다 — 긴 이름이 줄을 늘리면 어긋난다.
+      // **위치 번호가 아니라 키로 집는다** — 히어로가 생기며 번호가 밀렸다
+      final rows = find.byKey(interviewRowKey);
+      expect(rows.evaluate().length, greaterThanOrEqualTo(2));
+      final h1 = tester.getSize(rows.at(0)).height;
+      final h2 = tester.getSize(rows.at(1)).height;
       expect(h1, h2);
     });
 
@@ -221,7 +221,7 @@ void main() {
       await tester.pumpWidget(host());
       await tester.pumpAndSettle();
 
-      final row = tester.widget<Container>(find.byType(Container).at(1));
+      final row = tester.widget<Container>(find.byKey(interviewRowKey).first);
       final border = (row.decoration! as BoxDecoration).border! as Border;
       expect(border.top.color, AppColors.borderSoft);
       expect(border.top.width, AppShape.borderW);
