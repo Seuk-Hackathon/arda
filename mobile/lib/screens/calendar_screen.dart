@@ -538,26 +538,32 @@ class _EmptyWeek extends StatelessWidget {
             ),
           ),
           const SizedBox(height: AppSpace.s3),
-          // §1: 주 동작 버튼은 흰 판 + 어두운 글자
-          Material(
-            color: AppColors.accentFill,
-            borderRadius: AppShape.ctl,
-            clipBehavior: Clip.antiAlias,
-            child: InkWell(
-              onTap: onNextWeek,
-              child: Container(
-                constraints: const BoxConstraints(
-                  minHeight: AppLayout.minTouchTarget,
-                ),
-                padding: const EdgeInsets.symmetric(horizontal: AppSpace.s4),
-                alignment: Alignment.center,
-                child: const Text(
-                  '다음 주 보기',
-                  style: TextStyle(
-                    fontFamily: AppType.fontFamily,
-                    fontSize: AppType.caption,
-                    fontWeight: FontWeight.w700,
-                    color: AppColors.onAccent,
+          // §1: 주 동작 버튼은 흰 판 + 어두운 글자.
+          // **Align 으로 감싼다** — Container 에 alignment 를 주면 남는 폭을 다
+          // 먹어서 흰 판이 화면을 가로지른다(실기기에서 확인). 이 화면에서
+          // 제일 센 요소가 되면 안 된다
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Material(
+              color: AppColors.accentFill,
+              borderRadius: AppShape.ctl,
+              clipBehavior: Clip.antiAlias,
+              child: InkWell(
+                onTap: onNextWeek,
+                child: Container(
+                  constraints: const BoxConstraints(
+                    minHeight: AppLayout.minTouchTarget,
+                  ),
+                  padding: const EdgeInsets.symmetric(horizontal: AppSpace.s5),
+                  alignment: Alignment.center,
+                  child: const Text(
+                    '다음 주 보기',
+                    style: TextStyle(
+                      fontFamily: AppType.fontFamily,
+                      fontSize: AppType.caption,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.onAccent,
+                    ),
                   ),
                 ),
               ),
