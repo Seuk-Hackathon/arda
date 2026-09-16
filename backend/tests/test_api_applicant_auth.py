@@ -16,9 +16,11 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
+from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.talent.api import applicant_auth
@@ -503,3 +505,152 @@ class TestExpiryNotYetStamped:
 
         db.expire_all()
         assert row.status == "pending", "목록 조회가 만료를 찍었다"
+
+
+class TestPasswordLogin:
+    """지원자 비밀번호 로그인 (2026-09-16, ADR-0033 개정).
+
+    생년월일은 **경우의 수가 만 단위**고 **새어도 못 바꾸는 값**이다. 게다가 지원
+    폼에서 선택이라 그 칸을 비운 사람은 영영 못 들어왔다. 접수 메일로 받은 링크에서
+    한 번 정하면 그 뒤로는 이메일 + 비밀번호로 들어온다.
+    """
+
+    SETUP = "/api/v1/public/applicant/password-setup-request"
+    LOGIN = "/api/v1/public/applicant/login"
+
+    def _issue(self, db: Session, email: str) -> str:
+        from app.talent import applicant_password
+
+        raw = applicant_password.issue_token(db, email)
+        db.commit()
+        return raw
+
+    def test_링크를_받아_비밀번호를_정하고_들어온다(
+        self, client, db: Session, application: Application
+    ):
+        a = _applicant(db, application)
+        token = self._issue(db, a.email)
+
+        opened = client.get(f"/api/v1/public/applicant/set-password/{token}")
+        assert opened.status_code == 200
+        assert opened.json()["email"] == a.email
+
+        done = client.post(
+            f"/api/v1/public/applicant/set-password/{token}",
+            json={"password": "짧지않은비밀번호1"},
+        )
+        assert done.status_code == 200
+
+        r = client.post(
+            self.LOGIN, json={"email": a.email, "password": "짧지않은비밀번호1"}
+        )
+        assert r.status_code == 200
+        assert r.json()["access_token"]
+
+    def test_한_번_쓴_링크는_죽는다(
+        self, client, db: Session, application: Application
+    ):
+        a = _applicant(db, application)
+        token = self._issue(db, a.email)
+        client.post(
+            f"/api/v1/public/applicant/set-password/{token}",
+            json={"password": "비밀번호12345"},
+        )
+
+        again = client.post(
+            f"/api/v1/public/applicant/set-password/{token}",
+            json={"password": "다른비밀번호12345"},
+        )
+        assert again.status_code == 410
+        assert client.get(f"/api/v1/public/applicant/set-password/{token}").status_code == 410
+
+    def test_새로_발급하면_이전_링크가_죽는다(
+        self, client, db: Session, application: Application
+    ):
+        """오래된 메일에서 누른 링크가 먹으면 안 된다."""
+        a = _applicant(db, application)
+        old = self._issue(db, a.email)
+        self._issue(db, a.email)
+
+        assert client.get(f"/api/v1/public/applicant/set-password/{old}").status_code == 410
+
+    def test_기한이_지난_링크는_안_먹는다(
+        self, client, db: Session, application: Application
+    ):
+        from app.models import ApplicantPasswordToken
+
+        a = _applicant(db, application)
+        token = self._issue(db, a.email)
+        row = db.scalars(select(ApplicantPasswordToken)).first()
+        row.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+        db.commit()
+
+        assert client.get(f"/api/v1/public/applicant/set-password/{token}").status_code == 410
+
+    def test_비밀번호를_정하면_생년월일로는_못_들어온다(
+        self, client, db: Session, application: Application
+    ):
+        """둘 다 열어 두면 약한 쪽으로 들어온다 — 생년월일은 SNS·이력서로 알 수 있다."""
+        a = _applicant(db, application)
+        before = client.post(
+            self.LOGIN, json={"email": a.email, "birth_date": "19980412"}
+        )
+        assert before.status_code == 200, "설정 전에는 생년월일로 들어온다"
+
+        token = self._issue(db, a.email)
+        client.post(
+            f"/api/v1/public/applicant/set-password/{token}",
+            json={"password": "비밀번호12345"},
+        )
+
+        after = client.post(
+            self.LOGIN, json={"email": a.email, "birth_date": "19980412"}
+        )
+        assert after.status_code == 401
+
+    def test_틀린_비밀번호는_401(self, client, db: Session, application: Application):
+        a = _applicant(db, application)
+        token = self._issue(db, a.email)
+        client.post(
+            f"/api/v1/public/applicant/set-password/{token}",
+            json={"password": "비밀번호12345"},
+        )
+
+        r = client.post(self.LOGIN, json={"email": a.email, "password": "틀린비밀번호"})
+        assert r.status_code == 401
+        assert "생년월일" not in r.text, "어느 쪽이 틀렸는지 알려주면 안 된다"
+
+    def test_bcrypt_가_자르는_길이는_거절한다(
+        self, client, db: Session, application: Application
+    ):
+        """한글 25자면 75바이트다. 자르면 뒤를 무엇으로 치든 같은 비밀번호가 된다."""
+        a = _applicant(db, application)
+        token = self._issue(db, a.email)
+
+        r = client.post(
+            f"/api/v1/public/applicant/set-password/{token}",
+            json={"password": "가" * 25},
+        )
+        assert r.status_code == 422
+
+    def test_없는_이메일로_요청해도_202(self, client, db: Session):
+        """있고 없고를 다르게 답하면 "이 사람이 여기 지원했나" 를 떠볼 수 있다."""
+        r = client.post(self.SETUP, json={"email": "nobody@test.local"})
+        assert r.status_code == 202
+
+    def test_지원_이력이_있으면_링크를_만든다(
+        self, client, db: Session, application: Application
+    ):
+        from app.models import ApplicantPasswordToken
+
+        a = _applicant(db, application)
+        with patch("app.talent.api.applicant_auth._send_password_mail") as sent:
+            r = client.post(self.SETUP, json={"email": a.email})
+        sent.assert_called_once()
+
+        assert r.status_code == 202
+        rows = db.scalars(
+            select(ApplicantPasswordToken).where(ApplicantPasswordToken.email == a.email)
+        ).all()
+        assert len(rows) == 1
+        assert rows[0].token_hash != ""

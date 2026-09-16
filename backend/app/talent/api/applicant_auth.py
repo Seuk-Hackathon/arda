@@ -1,7 +1,14 @@
-"""지원자 앱 로그인 — 이메일 + 생년월일 8자리 (ADR-0033).
+"""지원자 앱 로그인 — 비밀번호, 아직 안 정했으면 생년월일 (ADR-0033 · 2026-09-16 개정).
 
-지원자가 앱에서 자기 지원 현황을 본다. 아이디는 **지원할 때 쓴 이메일**,
-비밀번호는 **생년월일 8자리**(`YYYYMMDD`)다.
+지원자가 앱·웹에서 자기 지원 현황을 본다. 아이디는 **지원할 때 쓴 이메일**이다.
+
+- **비밀번호를 정한 계정**은 비밀번호로만 들어온다. 설정 링크는 메일로 받는다
+  (`applicant_password.py`). 둘 다 열어 두면 약한 쪽으로 들어오기 때문이다.
+- **아직 안 정한 계정**은 예전대로 **생년월일 8자리**(`YYYYMMDD`)로 들어온다.
+  기존 지원자를 그 자리에서 막지 않는다.
+
+아래는 생년월일 방식에 대한 원래 기록이다 — **그 방식이 여전히 살아 있는 동안
+유효하다.**
 
 ## 이 방식의 약점을 문서에 남긴다
 
@@ -37,12 +44,13 @@ import time
 from datetime import date, datetime, timezone
 from http import HTTPStatus
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.deps import get_current_applicant_email
+from app.talent import applicant_password
 from app.shared.labels import STAGE_LABEL_APPLICANT_KR as STAGE_LABEL
 from app.models import (
     Application,
@@ -57,6 +65,9 @@ from app.schemas.applicant_auth import (
     MyApplicationOut,
     MyInterviewOut,
     MyTokenLinkOut,
+    PasswordSetupRequest,
+    PasswordTokenOut,
+    SetPasswordRequest,
 )
 from app.security import APPLICANT_EXPIRES_MINUTES, create_applicant_token
 
@@ -143,28 +154,121 @@ def applicant_login(
             f"로그인 시도가 많습니다. {left // 60 + 1}분 뒤에 다시 시도해 주세요",
         )
 
-    birth = _parse_birth(body.birth_date)
-    rows = (
-        db.scalars(select(Application).where(Application.email == email)).all()
-        if birth is not None
-        else []
-    )
-    # 같은 이메일로 여러 공고에 지원할 수 있다. 하나라도 맞으면 통과다 —
-    # `birth_date` 가 없는 행은 맞을 수 없다(None == None 을 만들지 않는다).
-    ok = any(r.birth_date is not None and r.birth_date == birth for r in rows)
+    # **비밀번호를 정한 계정은 생년월일로 못 들어온다** (2026-09-16, ADR-0033 개정).
+    # 둘 다 열어 두면 약한 쪽으로 들어온다 — 생년월일은 SNS·이력서로 알 수 있는
+    # 값이라, 비밀번호를 정해도 보안이 그대로다.
+    if applicant_password.has_password(db, email):
+        ok = bool(body.password) and applicant_password.verify(db, email, body.password)
+    elif body.password:
+        # 아직 안 정한 계정에 비밀번호로 들어오려 한 경우. **"설정 안 했다"고
+        # 알려 주지 않는다** — 그 자체가 "이 사람이 여기 지원했다" 는 신호다.
+        ok = False
+    else:
+        birth = _parse_birth(body.birth_date or "")
+        rows = (
+            db.scalars(select(Application).where(Application.email == email)).all()
+            if birth is not None
+            else []
+        )
+        # 같은 이메일로 여러 공고에 지원할 수 있다. 하나라도 맞으면 통과다 —
+        # `birth_date` 가 없는 행은 맞을 수 없다(None == None 을 만들지 않는다).
+        ok = any(r.birth_date is not None and r.birth_date == birth for r in rows)
 
     if not ok:
         _note_failure(email, now)
         # 남은 시도 횟수를 알려주지 않는다. 알려주면 "이 이메일은 존재한다"는
         # 신호가 된다 — 없는 이메일도 똑같이 세기 때문이다.
         logger.info("applicant_login_failed", extra={"email_domain": email.rpartition("@")[2]})
-        raise HTTPException(HTTPStatus.UNAUTHORIZED, "이메일 또는 생년월일이 맞지 않습니다")
+        raise HTTPException(HTTPStatus.UNAUTHORIZED, "로그인 정보가 맞지 않습니다")
 
     _FAILS.pop(email, None)
     return ApplicantLoginResponse(
         access_token=create_applicant_token(email),
         expires_in=APPLICANT_EXPIRES_MINUTES * 60,
     )
+
+
+@router.post("/public/applicant/password-setup-request", status_code=HTTPStatus.ACCEPTED)
+def request_password_setup(
+    body: PasswordSetupRequest,
+    background: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
+    """비밀번호 설정 링크를 메일로 보낸다. **처음 정할 때와 잊었을 때가 같은 경로다.**
+
+    **지원 이력이 없어도 202 다.** 있고 없고를 다르게 답하면 "이 사람이 여기
+    지원했는가" 를 확인하는 도구가 된다 — 이직 준비 중인 사람에게는 지원 사실
+    자체가 지켜야 할 정보다(로그인이 실패 사유를 안 나누는 것과 같은 이유).
+
+    **링크가 새면 계정이 넘어간다.** 그래서 원본은 메일 본문에만 두고 DB 에는
+    해시만 남기며, 새로 발급하면 그 이메일의 이전 링크는 그 자리에서 죽는다.
+    """
+    email = applicant_password.normalize(body.email)
+    rows = db.scalars(
+        select(Application).where(Application.email == email).limit(1)
+    ).all()
+    if rows:
+        token = applicant_password.issue_token(db, email)
+        db.commit()
+        background.add_task(
+            _send_password_mail, rows[0].id, email, applicant_password.setup_url(token)
+        )
+    return {"detail": "메일을 보냈습니다"}
+
+
+@router.get(
+    "/public/applicant/set-password/{token}", response_model=PasswordTokenOut
+)
+def check_password_token(token: str, db: Session = Depends(get_db)):
+    """링크가 살아 있는지 + 어느 계정인지. 화면이 아이디를 보여 줘야 한다.
+
+    **만료와 이미 사용됨을 구별해 주지 않는다** — 다르게 답하면 토큰 유효성을
+    떠볼 수 있다. 둘 다 410 에 같은 문구다.
+    """
+    row = applicant_password.resolve_token(db, token)
+    if row is None:
+        raise HTTPException(HTTPStatus.GONE, "만료됐거나 이미 사용한 링크입니다")
+    return PasswordTokenOut(email=row.email)
+
+
+@router.post("/public/applicant/set-password/{token}")
+def set_password(
+    token: str, body: SetPasswordRequest, db: Session = Depends(get_db)
+):
+    """비밀번호를 정한다. **링크는 한 번만 쓴다** — 쓰고 나면 그 자리에서 죽는다.
+
+    정하고 나면 그 계정은 **생년월일로 못 들어온다**(로그인 참고).
+    """
+    if applicant_password.too_long(body.password):
+        raise HTTPException(
+            HTTPStatus.UNPROCESSABLE_ENTITY,
+            "비밀번호가 너무 깁니다 (한글은 24자, 영문·숫자는 64자까지)",
+        )
+    row = applicant_password.resolve_token(db, token)
+    if row is None:
+        raise HTTPException(HTTPStatus.GONE, "만료됐거나 이미 사용한 링크입니다")
+
+    applicant_password.set_password(db, row, body.password)
+    return {"detail": "비밀번호를 정했습니다"}
+
+
+def _send_password_mail(application_id: int, email: str, url: str) -> None:
+    """설정 링크를 메일로 보낸다. **실패해도 요청은 이미 202 로 끝났다.**
+
+    지원자를 기다리게 하지 않는 자리다 — 메일 경로가 죽어 있어도 "메일을 보냈다"
+    라고 답하는 것은 위 경로가 존재 여부를 안 알려주는 것과 같은 선택이다.
+    """
+    from app.db import SessionLocal
+    from app.shared import mail
+
+    try:
+        with SessionLocal() as db:
+            log = mail.create_log(db, application_id, email, "password_setup")
+            log.subject, log.body = mail.render_password_setup(db, url)
+            db.commit()
+            mail.publish(log.id)
+    except Exception:
+        logger.exception("비밀번호 설정 메일 발송 실패: domain=%s", email.rpartition("@")[2])
 
 
 @router.get("/applicant/me", response_model=ApplicantMeOut)
