@@ -128,7 +128,10 @@ app.add_middleware(
     allow_credentials=False,
     allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
-    max_age=600,
+    # 박제 온프레미스 (2026-09-16): 컨테이너 재시작 순간 CF 가 잠깐 530 을 리턴하면
+    # 브라우저가 그 preflight 실패를 max_age 만큼 캐시해 그 시간 동안 계속 실패로 보임.
+    # 심사 기간엔 preflight 성능 최적화보다 실패 캐시 방지가 우선. 0 으로 원천 차단.
+    max_age=0,
 )
 
 
