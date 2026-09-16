@@ -388,3 +388,118 @@ class TestMyOtherTokens:
         for app_row in body["applications"]:
             assert app_row["aptitudes"] == []
             assert app_row["schedules"] == []
+
+
+class TestExpiryNotYetStamped:
+    """**아직 `expired` 로 찍히지 않은 만료** (2026-09-15 앱 실기기, 민아님 보고).
+
+    만료 판정은 토큰을 열 때만 돈다(스케줄러 없음). 아무도 안 열었으면 기한이
+    지나도 DB 는 `pending` 이라, 상태만 보고 거르던 이 목록을 그대로 통과했다.
+    앱 홈은 「3일 남음」이라 적고, 눌러 들어가면 「기한이 지났습니다」가 떴다.
+
+    **끝난 것은 기한과 무관하게 남긴다** — 그걸 같이 거르면 09-09 에 고쳤던
+    "마친 면접이 화면에서 사라지는" 문제가 되돌아온다.
+    """
+
+    def _iv(self, db: Session, application: Application, admin_user: User,
+            status: str, days: int):
+        from app.models import InterviewSession
+
+        row = InterviewSession(
+            application_id=application.id,
+            token=f"iv-{status}-{days}-{application.id}",
+            status=status,
+            expires_at=datetime.now(UTC) + timedelta(days=days),
+            created_by=admin_user.id,
+        )
+        db.add(row)
+        db.flush()
+        return row
+
+    def _apt(self, db: Session, application: Application, admin_user: User,
+             status: str, days: int):
+        from app.models import AptitudeSession
+
+        row = AptitudeSession(
+            application_id=application.id,
+            token=f"apt-{status}-{days}-{application.id}",
+            status=status,
+            expires_at=datetime.now(UTC) + timedelta(days=days),
+            created_by=admin_user.id,
+        )
+        db.add(row)
+        db.flush()
+        return row
+
+    def _sch(self, db: Session, application: Application, admin_user: User,
+             status: str, days: int):
+        from app.models import ScheduleProposal
+
+        row = ScheduleProposal(
+            application_id=application.id,
+            token=f"sch-{status}-{days}-{application.id}",
+            status=status,
+            expires_at=datetime.now(UTC) + timedelta(days=days),
+            created_by=admin_user.id,
+        )
+        db.add(row)
+        db.flush()
+        return row
+
+    def _me(self, client, a: Application) -> dict:
+        token = create_applicant_token(a.email)
+        return client.get(ME, headers={"Authorization": f"Bearer {token}"}).json()
+
+    def test_기한_지난_pending_면접은_안_온다(
+        self, client, db: Session, application: Application, admin_user: User
+    ):
+        a = _applicant(db, application)
+        alive = self._iv(db, a, admin_user, "pending", days=3)
+        self._iv(db, a, admin_user, "pending", days=-1)  # 아무도 안 열어 아직 pending
+
+        rows = self._me(client, a)["applications"][0]["interviews"]
+        assert [x["token"] for x in rows] == [alive.token]
+
+    def test_기한이_지나도_끝난_면접은_남는다(
+        self, client, db: Session, application: Application, admin_user: User
+    ):
+        """지원자가 놓친 것이 아니라 **다시 볼 자리**다."""
+        a = _applicant(db, application)
+        done = self._iv(db, a, admin_user, "done", days=-30)
+
+        rows = self._me(client, a)["applications"][0]["interviews"]
+        assert [x["token"] for x in rows] == [done.token]
+
+    def test_기한_지난_pending_인적성은_안_오고_낸_것은_온다(
+        self, client, db: Session, application: Application, admin_user: User
+    ):
+        a = _applicant(db, application)
+        self._apt(db, a, admin_user, "pending", days=-1)
+        submitted = self._apt(db, a, admin_user, "done", days=-1)
+
+        rows = self._me(client, a)["applications"][0]["aptitudes"]
+        assert [x["token"] for x in rows] == [submitted.token]
+
+    def test_기한_지난_제안은_안_오고_확정은_온다(
+        self, client, db: Session, application: Application, admin_user: User
+    ):
+        """확정된 일정은 **언제로 잡혔는지 다시 볼 일**이 있다."""
+        a = _applicant(db, application)
+        self._sch(db, a, admin_user, "proposed", days=-2)
+        confirmed = self._sch(db, a, admin_user, "confirmed", days=-2)
+
+        rows = self._me(client, a)["applications"][0]["schedules"]
+        assert [x["token"] for x in rows] == [confirmed.token]
+
+    def test_목록을_봐도_상태를_바꾸지_않는다(
+        self, client, db: Session, application: Application, admin_user: User
+    ):
+        """GET 은 쓰기를 하지 않는다 — 지원자가 앱을 켤 때마다 커밋이 생기면 안 된다."""
+        a = _applicant(db, application)
+        row = self._iv(db, a, admin_user, "pending", days=-1)
+        db.commit()
+
+        self._me(client, a)
+
+        db.expire_all()
+        assert row.status == "pending", "목록 조회가 만료를 찍었다"

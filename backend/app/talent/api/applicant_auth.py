@@ -34,11 +34,11 @@ from __future__ import annotations
 
 import logging
 import time
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from http import HTTPStatus
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.db import get_db
@@ -98,6 +98,28 @@ def _parse_birth(raw: str) -> date | None:
         return datetime.strptime(raw, "%Y%m%d").date()
     except ValueError:
         return None
+
+
+def _not_expired(model, *, finished: tuple[str, ...]):
+    """기한이 지난 줄을 거르는 조건 (2026-09-16, 앱 오너 요청).
+
+    **만료 판정은 토큰을 열 때만 돈다**(스케줄러 없음 — B4 마감과 같은 방식).
+    그래서 아무도 그 링크를 안 열었으면 `status` 는 기한이 지나도 `pending` 이다.
+    이 목록이 상태만 보고 걸러 왔기 때문에, 앱 홈은 「3일 남음」이라 적고 들어가면
+    「기한이 지났습니다」가 뜨는 일이 났다(2026-09-15 실기기).
+
+    **끝난 것은 기한과 무관하게 남긴다.** 면접을 마쳤거나 일정이 확정된 줄은
+    지원자가 다시 볼 자리이지 놓친 것이 아니다 — 여기를 안 가르면 09-09 에
+    고쳤던 "마친 면접이 화면에서 사라지는" 문제가 되돌아온다.
+
+    이 함수는 **읽기만 한다.** 목록을 그릴 때마다 `status` 를 `expired` 로 쓰면
+    지원자가 앱을 켤 때마다 GET 이 커밋을 남긴다 — 그건 토큰을 실제로 열 때 한다.
+    """
+    return or_(
+        model.status.in_(finished),
+        model.expires_at.is_(None),
+        model.expires_at > datetime.now(timezone.utc),
+    )
 
 
 @router.post("/public/applicant/login", response_model=ApplicantLoginResponse)
@@ -188,6 +210,7 @@ def applicant_me(
             .where(
                 InterviewSession.application_id.in_(app_ids),
                 InterviewSession.status.in_(("pending", "in_progress", "done")),
+                _not_expired(InterviewSession, finished=("done",)),
             )
             .order_by(InterviewSession.id)
         ).all():
@@ -200,6 +223,7 @@ def applicant_me(
             .where(
                 AptitudeSession.application_id.in_(app_ids),
                 AptitudeSession.status.in_(("pending", "done")),
+                _not_expired(AptitudeSession, finished=("done",)),
             )
             .order_by(AptitudeSession.id)
         ).all():
@@ -212,6 +236,7 @@ def applicant_me(
             .where(
                 ScheduleProposal.application_id.in_(app_ids),
                 ScheduleProposal.status.in_(("proposed", "confirmed")),
+                _not_expired(ScheduleProposal, finished=("confirmed",)),
             )
             .order_by(ScheduleProposal.id)
         ).all():
