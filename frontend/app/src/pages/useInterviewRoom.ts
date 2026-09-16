@@ -45,6 +45,13 @@ type Signal = {
   ice_servers?: RTCIceServer[]
   code?: string
   message?: string
+  /* 판정이 이 방으로 들어온다 (2026-09-16). 워커가 백엔드로 밀면
+     (`POST /internal/interview/{token}/verdict`) 백엔드가 이 방에 흘린다.
+
+     **필드를 세어 두지 않는다** — 백엔드 `VerdictIn` 이 `extra="allow"` 라
+     워커가 늘리는 값(`signals`·`expressions`·`voice`)이 그대로 넘어온다.
+     여기서 이름을 박아 두면 워커가 늘릴 때마다 프론트가 막는 셈이 된다. */
+  [extra: string]: unknown
 }
 
 /* 서버가 주는 error.code 중 화면이 말을 바꿔야 하는 것들. 모르는 코드는
@@ -70,6 +77,15 @@ export function useInterviewRoom(opts: RoomOptions) {
      그래서 ref 만이 아니라 상태로도 들고 있다. 상대가 나가면 `null` 이 되어
      분석도 같이 멈춘다. */
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null)
+
+  /* 담당자가 얼굴을 워커로 보낼 때 쓰는 면접 토큰 (2026-09-16).
+     입장권 응답에 들어 있는데 훅 안에만 있었다 — [useLiveAnalysis] 가
+     `/ai/ws/interview/{token}?role=recruiter` 에 붙으려면 이 값이 필요하다. */
+  const [token_, setToken_] = useState<string | null>(null)
+
+  /* 방으로 들어온 마지막 판정. **여기서 모양을 손대지 않는다** — 받는 쪽이
+     읽는다(위 [Signal] 주석과 같은 이유). */
+  const [verdict, setVerdict] = useState<Signal | null>(null)
 
   const localRef = useRef<HTMLVideoElement | null>(null)
   const remoteRef = useRef<HTMLVideoElement | null>(null)
@@ -171,11 +187,17 @@ export function useInterviewRoom(opts: RoomOptions) {
       if (role === 'recruiter') {
         try {
           /* **입장권은 접속 직전에 받는다.** 60초·1회용이라 미리 받아 두면 만료된다. */
-          const t = await api.post<{ ticket: string; token: string; ice_servers: RTCIceServer[] }>(
+          const t = await api.post<{
+            ticket: string
+            token: string
+            ice_servers: RTCIceServer[]
+          }>(
             `/interview-sessions/${sessionId}/rtc-ticket`,
           )
           if (!aliveRef.current) return
           wsToken = t.token
+          // 얼굴을 워커로 보낼 때 쓴다 (2026-09-16)
+          setToken_(t.token)
           query = `?ticket=${encodeURIComponent(t.ticket)}`
           iceServersRef.current = t.ice_servers ?? []
         } catch {
@@ -243,6 +265,15 @@ export function useInterviewRoom(opts: RoomOptions) {
       async function handle(msg: Signal) {
         const pc = pcRef.current
         switch (msg.type) {
+          /* 판정 (2026-09-16). **이 방으로 온다** — 워커가 백엔드로 밀면
+             백엔드가 여기 흘린다(`interview_rtc.py` 의 `RELAY_TYPES`).
+
+             전에는 담당자 화면이 `/ai/ws/live` 소켓에서 직접 받았는데, 그
+             소켓이 `/ai/ws/interview/{token}?role=recruiter` 로 바뀌면서
+             판정이 이 길로만 온다. **여기서 안 읽으면 화면이 조용히 죽는다.** */
+          case 'verdict':
+            setVerdict(msg)
+            return
           case 'hello':
             if (msg.ice_servers?.length) iceServersRef.current = msg.ice_servers
             /* 거는 쪽을 **서버가 정해 준다** — 양쪽이 동시에 걸면 협상이 꼬인다.
@@ -308,7 +339,20 @@ export function useInterviewRoom(opts: RoomOptions) {
     setPhase('peer-left')
   }, [cleanup])
 
-  return { phase, error, muted, toggleMute, leave, localRef, remoteRef, remoteStream }
+  return {
+    phase,
+    error,
+    muted,
+    toggleMute,
+    leave,
+    localRef,
+    remoteRef,
+    remoteStream,
+    /** 얼굴을 워커로 보낼 때 쓰는 면접 토큰. 담당자 자리에서만 채워진다 */
+    token: token_,
+    /** 방으로 들어온 마지막 판정 */
+    verdict,
+  }
 }
 
 export const PHASE_LABEL: Record<RoomPhase, string> = {

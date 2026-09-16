@@ -115,13 +115,56 @@ const VOICE_MAX = 300
 /** 끊겼을 때 다시 붙어 보는 횟수. 이 뒤로는 오류로 적는다 */
 const RETRY_MAX = 5
 
+/* 판정 한 통을 화면이 쓰는 모양으로. **두 길에서 같은 것을 쓴다** —
+   `/ai/ws/live` 소켓(`type: 'live'`)과 시그널링 방(`type: 'verdict'`) 둘 다
+   워커가 만든 같은 값이라, 모양을 두 벌 두면 한쪽만 고치는 날이 온다. */
+function toVerdict(m: Record<string, unknown>): LiveVerdict {
+  return {
+    truth_pct: typeof m.truth_pct === 'number' ? m.truth_pct : undefined,
+    lie_pct: typeof m.lie_pct === 'number' ? m.lie_pct : undefined,
+    signals: Array.isArray(m.signals) ? (m.signals as FaceSignal[]) : undefined,
+    expressions: Array.isArray(m.expressions) ? (m.expressions as Expression[]) : undefined,
+    voice:
+      m.voice && typeof m.voice === 'object' ? (m.voice as VoiceSignals) : undefined,
+    /* 방으로 오는 판정에는 이 값이 없다 — 워커가 판정을 못 내면 **아예 안
+       민다**(`app.py` 가 로그만 남기고 돌아선다). `/ws/live` 갈래에서만 온다 */
+    reason: m.ok === false ? (m.reason as string | undefined) : undefined,
+    at: Date.now(),
+  }
+}
+
+function fold(s: LiveAnalysis, v: LiveVerdict): LiveAnalysis {
+  return {
+    ...s,
+    latest: v,
+    /* 못 낸 것(`reason`)은 흐름에 안 쌓는다 — "얼굴이 잘 안 보여요" 가
+       줄줄이 쌓이면 진짜 값이 묻힌다 */
+    history: v.reason ? s.history : [v, ...s.history].slice(0, HISTORY_MAX),
+    voices: v.voice && !v.reason ? [v.voice, ...s.voices].slice(0, VOICE_MAX) : s.voices,
+  }
+}
+
 /**
  * 상대 영상을 워커에 넘겨 실시간 분석을 받는다.
  *
  * `stream` 이 `null` 이면 아무것도 하지 않는다 — 상대가 아직 안 붙었거나
  * 나간 상태다. 다시 붙으면 새 스트림으로 저절로 다시 시작한다.
  */
-export function useLiveAnalysis(stream: MediaStream | null): LiveAnalysis {
+export function useLiveAnalysis(
+  stream: MediaStream | null,
+  /* 면접 토큰. 있으면 **그 세션 소켓**에 붙는다 (2026-09-16, 백엔드 PR #273).
+     없으면 예전처럼 `/ai/ws/live` — 토큰 없는 자리다.
+
+     **왜 갈아탔나**: `/ai/ws/live` 로 보내면 얼굴이 그 면접 세션 장부에 안
+     남는다. 앱이 소리를, 담당자가 얼굴을 같은 토큰으로 보내야 서버가 둘을
+     한 판정으로 묶는다 — 전에는 소켓마다 세션을 새로 만들어 앱은 `no_face`,
+     담당자는 `short_audio` 로 양쪽 다 판정이 안 났다. */
+  token?: string | null,
+  /* 방으로 들어온 판정. **토큰 갈래에서는 소켓이 판정을 안 준다** —
+     `{"type":"ready"}` 와 `ping/pong` 뿐이고, 판정은 워커 → 백엔드 →
+     시그널링 방으로 간다. 그래서 밖에서 받아 넣는다. */
+  pushed?: Record<string, unknown> | null,
+): LiveAnalysis {
   const [state, setState] = useState<LiveAnalysis>(EMPTY)
 
   /* 상대가 바뀌면(들어오거나 나가면) 앞사람 값을 지운다.
@@ -176,7 +219,16 @@ export function useLiveAnalysis(stream: MediaStream | null): LiveAnalysis {
        카메라·마이크 쪽은 살아 있으므로 소켓만 갈아 끼우면 이어진다. */
     const connect = () => {
       if (closing || !aliveRef.current) return
-      const socket = new WebSocket(aiWsUrl('/ai/ws/live'))
+      /* **`?role=recruiter` 를 꼭 붙인다** — 안 붙이면 서버가 지원자 자리로
+         본다(백엔드 PR #273). 이 역할로 붙으면 서버가 얼굴(`0x02`)만 받고
+         소리(`0x01`)는 버리며, 질문·답변 흐름에 끼우지 않는다. */
+      const socket = new WebSocket(
+        token
+          ? aiWsUrl(`/ai/ws/interview/${encodeURIComponent(token)}`, {
+              role: 'recruiter',
+            })
+          : aiWsUrl('/ai/ws/live'),
+      )
       socket.binaryType = 'arraybuffer'
       ws = socket
 
@@ -222,25 +274,7 @@ export function useLiveAnalysis(stream: MediaStream | null): LiveAnalysis {
           return
         }
         if (m.type !== 'live') return
-
-        const v: LiveVerdict = {
-          truth_pct: typeof m.truth_pct === 'number' ? m.truth_pct : undefined,
-          lie_pct: typeof m.lie_pct === 'number' ? m.lie_pct : undefined,
-          signals: Array.isArray(m.signals) ? m.signals : undefined,
-          expressions: Array.isArray(m.expressions) ? m.expressions : undefined,
-          voice: m.voice && typeof m.voice === 'object' ? m.voice : undefined,
-          reason: m.ok === false ? m.reason : undefined,
-          at: Date.now(),
-        }
-        setState((s) => ({
-          ...s,
-          latest: v,
-          /* 못 낸 것(`reason`)은 흐름에 안 쌓는다 — "얼굴이 잘 안 보여요" 가
-             줄줄이 쌓이면 진짜 값이 묻힌다 */
-          history: v.reason ? s.history : [v, ...s.history].slice(0, HISTORY_MAX),
-          voices:
-            v.voice && !v.reason ? [v.voice, ...s.voices].slice(0, VOICE_MAX) : s.voices,
-        }))
+        setState((s) => fold(s, toVerdict(m)))
       }
     }
 
@@ -326,7 +360,19 @@ export function useLiveAnalysis(stream: MediaStream | null): LiveAnalysis {
       aliveRef.current = false
       cleanup()
     }
-  }, [stream])
+  }, [stream, token])
+
+  /* 방으로 들어온 판정을 접어 넣는다 (2026-09-16).
+
+     **토큰 갈래에서는 이것이 유일한 판정 경로다.** 담당자 소켓은 얼굴을
+     보내기만 하고 판정은 안 준다 — 워커 → 백엔드 → 시그널링 방으로 간다.
+     [useInterviewRoom] 이 그 방에서 받아 넘겨 준다. */
+  const foldedRef = useRef<Record<string, unknown> | null>(null)
+  useEffect(() => {
+    if (!pushed || pushed === foldedRef.current) return
+    foldedRef.current = pushed
+    setState((s) => fold(s, toVerdict(pushed)))
+  }, [pushed])
 
   return state
 }
