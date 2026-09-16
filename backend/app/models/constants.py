@@ -27,7 +27,13 @@ PROPOSAL_STATUSES = ("proposed", "confirmed", "expired", "canceled")
 DOC_TYPES = FILE_KINDS + ("self_intro",)
 PUBLICATION_STATUSES = ("pending", "confirmed", "failed")
 
-EMAIL_LOG_STAGES = STAGES + ("custom",)
+# 단계 메일 + `custom`(담당자 수동 발송) + `password_setup`.
+#
+# `password_setup` 은 **단계가 아니라 기능성 메일**이다 (2026-09-16, ADR-0033 개정).
+# 지원자가 비밀번호 설정 링크를 받는 자리라 어느 전형 단계에도 안 붙는다. `custom`
+# 으로 적지 않는 이유는 그쪽이 "담당자가 직접 쓴 메일" 을 뜻해서다 — 통계에서
+# 사람이 쓴 것과 시스템이 보낸 링크가 섞인다.
+EMAIL_LOG_STAGES = STAGES + ("custom", "password_setup")
 EMAIL_ACTOR_KINDS = ("human", "agent", "system")
 TEMPLATE_STAGES = ("applied", "interview", "accepted", "rejected")
 
