@@ -351,3 +351,109 @@ DATABASE_URL='postgresql+psycopg://postgres:postgres@localhost:5433/arda' \
 psql "$DATABASE_URL" -c 'ANALYZE applications;'
 psql "$DATABASE_URL" -c "EXPLAIN (ANALYZE, BUFFERS) SELECT * FROM applications ORDER BY created_at DESC, id DESC LIMIT 50;"
 ```
+
+---
+
+# 재측정 — 2026-09-16 (폴더 재편 뒤)
+
+> 백엔드 큐 26번. [ADR-0035](03_decision/0035-헥사고날-부분적용-Bounded-Context.md) 로 조회가 전부 Repository 를 타게 바뀐 뒤(#184~#205) **한 번도 안 쟀다.** 위 2026-08-25 수치와 같은 쿼리·같은 방법으로 다시 잰 것이다.
+>
+> **결론: SQL 회귀 없음.** 계획(plan)이 그대로고 실행 시간도 같은 자리다. 다만 **잴 때 두 번 헛디뎠고**, 그 두 가지가 앞으로 이 문서를 다시 쓸 사람에게 더 쓸모 있어 같이 적는다.
+
+## 측정 환경
+
+08-25 와 같다 — 다른 점만 적는다.
+
+| | 2026-08-25 | **2026-09-16** |
+|---|---|---|
+| 지원서 | 100,000건 | 100,000건 |
+| 테이블 크기 | 162 MB | **174 MB** (컬럼이 늘었다 — 자동 심사·통합 API·성별) |
+| 인덱스 | 3개 + `created_id` | **7개** (이메일 단독, 통합 `external_id`, 포털 토큰이 늘었다) |
+| 스키마 | v1.x | **alembic 0024** |
+
+## ① ~ ④ SQL — **계획도 시간도 그대로**
+
+`EXPLAIN (ANALYZE, BUFFERS)` 3회 중앙값.
+
+| 쿼리 | 08-25 | **09-16** | 계획 |
+|---|---|---|---|
+| ① 목록 50건 | 0.253 ms | **0.313 ms** | `Index Scan using ix_applications_created_id` — 같음 |
+| ② 이름 검색 `q=김` | 7.722 ms | **9.577 ms** | 같음 (+ Filter) |
+| ③ 단계 필터 | 0.431 ms | **0.462 ms** | 같음 |
+| ④ 공고+단계 | 1.305 ms | **2.785 ms** | **계획이 바뀌었다** — 아래 |
+| COUNT 전체 | 9.677 ms | **15.478 ms** | `Index Only Scan` — 같음 |
+| COUNT 검색 `q=김` | 104.477 ms | **108.549 ms** | `Seq Scan` — 같음 |
+
+**Repository 도입은 SQL 을 바꾸지 않았다.** 당연해 보이지만 확인할 값어치가 있었다 — 조회를 한 겹 감싸면 흔히 N+1 이나 불필요한 eager load 가 끼어든다. 여기서는 안 끼어들었다.
+
+### ④ 만 계획이 바뀌었다 — `posting_stage` → `created_id`
+
+08-25 에는 `ix_applications_posting_stage (job_posting_id, current_stage)` 로 1,500건을 읽고 정렬했다. 지금은 **`created_id` 를 정렬 순서로 읽으면서 조건을 거르는 쪽**을 고른다.
+
+플래너가 바뀐 이유는 **한 공고의 `interview` 가 전체의 1.5%(1,500/100,000)** 라, 정렬된 순서로 읽어도 50개를 금방 채운다고 본 것이다. 실제로 그렇다 — 2.8 ms 다.
+
+**1.3 → 2.8 ms 는 회귀가 아니라 선택 차이**이고, 둘 다 사람이 못 느끼는 구간이다. 손댈 이유가 없다.
+
+## API — **`total` 이 여전히 유일한 병목이다**
+
+서버가 스스로 남기는 `duration_ms`(08-25 의 `took_ms` 와 같은 값) 5회 중앙값.
+
+| 경우 | 08-25 | **09-16** |
+|---|---|---|
+| ① 목록 50건 | 9.5 ms | **16.4 ms** |
+| ② 검색 `q=김` | 109.3 ms | **122.3 ms** |
+| ③ 단계 필터 | 5.1 ms | **9.4 ms** |
+| ④ 공고+단계 | — | 9.0 ms |
+| **① 목록 · `with_total=false`** | — | **6.5 ms** |
+| **② 검색 · `with_total=false`** | — | **9.6 ms** |
+
+**검색이 `total` 을 끄면 122 → 9.6 ms, 12.7배다.** 08-25 에 "인덱스로 풀 수 없는 병목" 이라고 적어 둔 진단이 그대로 재확인됐고, 그때 적은 처방(`with_total=false`)이 실제로 듣는다는 것까지 이번에 숫자로 확인했다.
+
+### 남은 6~7 ms 는 **요청당 고정비**다 — 데이터 양과 무관하다
+
+①이 9.5 → 16.4 ms 로 는 것이 재편 탓인지 확인했다. **아니다.**
+
+| | `duration_ms` | 응답 크기 |
+|---|---|---|
+| 목록 **50건** (`total` 끔) | 9.1 ms | 9.6 KB |
+| 목록 **1건** (`total` 끔) | **6.9 ms** | 0.4 KB |
+
+50배 적게 내려주는데 2.2 ms 밖에 안 줄어든다. **나머지 ~7 ms 는 건수와 무관한 고정비**(미들웨어·요청 로깅·의존성 해결)이고, 08-25 와 09-16 사이에 그 층이 두꺼워진 것이다 — 구조화 로깅(J5·J6)·에러 표준화·지원자 토큰 분기가 그 사이에 들어왔다.
+
+**직렬화 비용이 아니다**: 50건 응답이 9.6 KB 뿐이다(건당 0.2 KB). 목록 응답에는 자기소개서 본문이 안 실린다.
+
+## 재측정하며 헛디딘 것 둘 — 다음 사람을 위해
+
+### ① `EXPLAIN ANALYZE` 첫 실행은 버린다
+
+④를 재는데 **첫 회가 5,585 ms, 다음이 2.8 ms** 였다. 디스크에서 처음 읽은 값이라 캐시가 빈 상태의 수치다. 08-25 문서가 "3회 실행 후 중앙값" 이라고 적어 둔 이유가 이것이고, **중앙값이라 자동으로 걸러진다** — 평균을 쓰면 안 되는 이유이기도 하다.
+
+### ② 측정 DB 를 만드는 두 함정
+
+| 증상 | 원인 | 대응 |
+|---|---|---|
+| `type "vector" does not exist` | 생성기의 `Base.metadata.create_all` 이 `application_embeddings`(pgvector)를 만들려 한다. alembic 은 그 테이블만 건너뛴다 | **alembic 으로 스키마를 올리고** 생성기의 `create_all` 만 건너뛴다 |
+| `document_anchors 는 TRUNCATE 할 수 없습니다` | 생성기가 `TRUNCATE … CASCADE` 를 도는데 무결성 원장 트리거가 막는다([ADR-0028](03_decision/0028-제출물-무결성-앵커.md)) | **빈 DB 에서는 `--append`** 로 돈다. 막힌 것이 정상이다 |
+
+두 번째는 **원장 잠금이 실제로 작동한다는 증거**이기도 하다 — 우연히 확인됐다.
+
+## 그래서 할 일
+
+1. **`with_total=false` 를 쓸 수 있는 화면을 찾는다.** 무한 스크롤·커서 페이지네이션처럼 "총 N건"이 필요 없는 자리에서 검색이 **12.7배** 빨라진다. 프론트와 같이 볼 일이다.
+2. **인덱스는 그대로 둔다.** 08-25 의 보류 판단(trgm·`stage_created`)은 이번 측정으로도 뒤집히지 않았다.
+3. **요청당 고정비 ~7 ms** 는 지금 문제가 아니다. 담당자 화면에서 체감되지 않고, 줄이려면 로깅·미들웨어를 손대야 하는데 그 둘은 사고를 추적하는 근거다. 기록만 남긴다.
+
+## 재현 방법 (2026-09-16 판)
+
+```bash
+# 1. 빈 DB + alembic (create_all 은 pgvector 때문에 못 쓴다)
+docker exec arda_postgres_tmp psql -U postgres -c "CREATE DATABASE arda_perf"
+DATABASE_URL='postgresql+psycopg://postgres:postgres@localhost:5433/arda_perf' uv run alembic upgrade head
+
+# 2. 더미 10만 건 — 빈 DB 이므로 --append (TRUNCATE 를 피한다)
+DATABASE_URL='…/arda_perf' uv run python backend/scripts/seed_dummy.py --count 100000 --append
+
+# 3. 통계 갱신 후 측정 (3회, 첫 회는 캐시가 비어 있다)
+psql "$DATABASE_URL" -c 'ANALYZE applications;'
+psql "$DATABASE_URL" -c "EXPLAIN (ANALYZE, BUFFERS) SELECT * FROM applications ORDER BY created_at DESC, id DESC LIMIT 50;"
+```
