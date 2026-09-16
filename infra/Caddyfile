@@ -1,4 +1,4 @@
-api.seuk.suvisdev.cloud {
+http://arda-api.suvisdev.cloud, http://localhost {
 	handle_path /demo/* {
 		root * /srv/demo
 		file_server
