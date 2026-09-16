@@ -235,13 +235,22 @@ def create_application_via_integration(
 
 
 def _public_url(app_row: Application) -> str | None:
-    """지원자가 상태를 볼 수 있는 공개 URL. portal_token 이 없으면 None."""
+    """지원자가 자기 지원 현황을 보는 주소 (2026-09-16 개정).
+
+    예전에는 `/my/<portal_token>` 이었다. **그 토큰은 이제 아무 데도 안 쓰인다** —
+    메일 링크 포털을 철거했고([ADR-0033](../../../../docs/03_decision/0033-지원자-앱-로그인.md)
+    개정), 프론트에도 토큰을 읽는 화면이 없어 링크를 열면 그냥 로그인 화면이었다.
+
+    지금은 **로그인 주소**를 준다. 지원자는 접수 메일로 받은 설정 링크에서
+    비밀번호를 정하고 여기서 들어온다. 회사 쪽에서 볼 때 달라지는 것은 없다 —
+    여전히 "지원자에게 알려 줄 주소" 하나다.
+    """
     import os
 
     base = os.getenv("PUBLIC_APP_BASE_URL", "").rstrip("/")
-    if not base or not app_row.portal_token:
+    if not base:
         return None
-    return f"{base}/my/{app_row.portal_token}"
+    return f"{base}/my"
 
 
 # ── 관리자용 · API key 발급 (임시) ─────────────────────────────────────

@@ -147,8 +147,8 @@ UNIQUE(job_posting_id, user_id).
 | current_stage | varchar(20) | NOT NULL, default `applied` | 위 stage enum |
 | privacy_agreed_at | timestamptz | NOT NULL | 개인정보 동의 시각 (C3) |
 | source | varchar(20) | NOT NULL, default `form` | `form`(외부 지원) / `manual`(담당자 등록, D6) |
-| portal_token | varchar(64) | UNIQUE | 지원 현황 조회 링크(신-1). **접수 시점에 만들지 않는다** — 지원자가 이메일로 요청할 때 발급한다. 아무도 안 볼 링크를 전건에 미리 만들면 유효한 토큰이 지원자 수만큼 상시 존재하게 된다 (2026-09-07, 리비전 `0010`) |
-| portal_token_expires_at | timestamptz | | 위 토큰 기한. 기본 7일. 지난 링크는 410 |
+| portal_token | varchar(64) | UNIQUE | **2026-09-16 미사용** — 메일 링크 포털을 철거해 이 토큰을 읽는 경로가 없다. 컬럼은 남기되 새로 채우지 않는다(데이터를 없애는 이행은 되돌리기 어렵다). ~~지원 현황 조회 링크(신-1). 접수 시점에 만들지 않고 지원자가 이메일로 요청할 때 발급 (2026-09-07, 리비전 `0010`)~~ |
+| portal_token_expires_at | timestamptz | | 위 토큰 기한(미사용, 위 참조). 기본 7일 |
 | created_at / updated_at | timestamptz | NOT NULL | |
 
 - UNIQUE `(job_posting_id, email)` — 중복 지원 방지(C6, 권장이지만 제약 하나로 끝나므로 처음부터 포함)
