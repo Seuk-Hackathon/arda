@@ -1140,3 +1140,146 @@ class TestQuestionCounts:
             .count()
         )
         assert n == session_service.MAX_FOLLOWUPS_PER_SESSION == 3
+
+
+class TestRetranscribe:
+    """자리표시자로 남은 답변을 음성으로 다시 채운다 (2026-09-16).
+
+    2026-09-15 세션 75 에서 전사가 상한(180초)을 넘겨 `[전사 지연 · 발화 43.9초]`
+    가 저장됐고 되살릴 길이 없었다([ADR-0038](../../docs/03_decision/0038-실시간-전사-OpenAI-API.md)).
+    **지원자가 한 말이 사라지는 자리**라 규칙마다 테스트를 붙인다.
+    """
+
+    @pytest.fixture()
+    def ended(self, db: Session, application: Application, admin_user: User):
+        s = _session(
+            db,
+            application,
+            admin_user,
+            token="tok-retry",
+            status="done",
+            consented_at=datetime.now(UTC),
+        )
+        db.add_all(
+            [
+                # 1 — 전사를 못 했고 음성은 남아 있다 (되살릴 수 있다)
+                InterviewTurn(
+                    session_id=s.id, seq=1, question="질문1",
+                    transcript="[전사 지연 · 발화 43.9초]",
+                    audio_s3_key=_AUDIO_KEY, answered_at=datetime.now(UTC),
+                ),
+                # 2 — 멀쩡히 들어간 답
+                InterviewTurn(
+                    session_id=s.id, seq=2, question="질문2",
+                    transcript="제대로 들어간 답입니다",
+                    audio_s3_key=_AUDIO_KEY, answered_at=datetime.now(UTC),
+                ),
+                # 3 — 실시간 소켓 경로라 음성이 없다 (못 살린다)
+                InterviewTurn(
+                    session_id=s.id, seq=3, question="질문3",
+                    transcript="[전사 불가 · 발화 8.9초]",
+                    answered_at=datetime.now(UTC),
+                ),
+            ]
+        )
+        db.commit()
+        return s
+
+    def _turn(self, db: Session, s: InterviewSession, seq: int) -> InterviewTurn:
+        db.expire_all()
+        return db.scalar(
+            select(InterviewTurn).where(
+                InterviewTurn.session_id == s.id, InterviewTurn.seq == seq
+            )
+        )
+
+    def test_자리표시자를_음성으로_다시_채우고_채점을_다시_돌린다(
+        self, as_user, admin_user: User, db: Session, ended
+    ):
+        with (
+            patch("app.shared.s3.read_object", return_value=b"fake-audio"),
+            patch("app.agent.stt.transcribe", return_value=_stt_result()),
+            patch("app.interview.scoring.score_interview_bg") as rescore,
+            patch("app.agent.interview_findings.generate_turn_findings_bg") as findings,
+        ):
+            res = as_user(admin_user).post(
+                f"/api/v1/interview-sessions/{ended.id}/retranscribe"
+            )
+
+        assert res.status_code == 200
+        body = res.json()
+        assert body["filled"] == [1]
+        assert body["no_audio"] == [3], "음성이 없어 못 살리는 칸을 그대로 알려줘야 한다"
+        assert self._turn(db, ended, 1).transcript.startswith("결제 정산 API")
+        # 빈 답변으로 매긴 점수가 그대로 남으면 담당자가 그 점수를 보고 판단한다
+        rescore.assert_called_once_with(ended.id)
+        findings.assert_called_once()
+
+    def test_멀쩡한_답변은_건드리지_않는다(
+        self, as_user, admin_user: User, db: Session, ended
+    ):
+        """몇 번을 눌러도 안전해야 한다 — 실패한 칸만 다시 시도한다."""
+        with (
+            patch("app.shared.s3.read_object", return_value=b"fake-audio"),
+            patch("app.agent.stt.transcribe", return_value=_stt_result()) as stt,
+            patch("app.interview.scoring.score_interview_bg"),
+            patch("app.agent.interview_findings.generate_turn_findings_bg"),
+        ):
+            as_user(admin_user).post(f"/api/v1/interview-sessions/{ended.id}/retranscribe")
+
+        assert self._turn(db, ended, 2).transcript == "제대로 들어간 답입니다"
+        assert stt.call_count == 1, "이미 글이 있는 칸까지 전사하면 돈이 두 번 나간다"
+
+    def test_이번에도_못_받아쓰면_자리표시자를_그대로_둔다(
+        self, as_user, admin_user: User, db: Session, ended
+    ):
+        with (
+            patch("app.shared.s3.read_object", return_value=b"fake-audio"),
+            patch("app.agent.stt.transcribe", side_effect=RuntimeError("STT 죽음")),
+            patch("app.interview.scoring.score_interview_bg") as rescore,
+        ):
+            res = as_user(admin_user).post(
+                f"/api/v1/interview-sessions/{ended.id}/retranscribe"
+            )
+
+        assert res.status_code == 200
+        assert res.json()["failed"] == [1]
+        assert self._turn(db, ended, 1).transcript == "[전사 지연 · 발화 43.9초]"
+        rescore.assert_not_called()  # 바뀐 게 없으면 다시 매기지 않는다
+
+    def test_로그인_없이는_부를_수_없다(self, public, ended):
+        """지원자 목소리를 다시 읽는 경로다. 토큰만으로 열면 안 된다."""
+        res = public.post(f"/api/v1/interview-sessions/{ended.id}/retranscribe")
+        assert res.status_code in (401, 403)
+
+    def test_없는_세션이면_404(self, as_user, admin_user: User):
+        res = as_user(admin_user).post("/api/v1/interview-sessions/999999/retranscribe")
+        assert res.status_code == 404
+
+    def test_전사가_실패해도_음성_키는_남는다(
+        self, as_user, admin_user: User, public, db: Session,
+        application: Application,
+    ):
+        """**이게 되살리기의 전제다.** 키가 안 남으면 S3 에 음성이 있어도 어느
+        회차의 것인지 모른다 — 세션 75 가 그랬다."""
+        s = _session(
+            db, application, admin_user, token="tok-keep-key",
+            status="in_progress", consented_at=datetime.now(UTC),
+        )
+        db.add(InterviewTurn(session_id=s.id, seq=1, question="질문1"))
+        db.commit()
+
+        with (
+            patch("app.shared.s3.read_object", return_value=b"fake-audio"),
+            patch("app.agent.stt.transcribe", side_effect=RuntimeError("STT 죽음")),
+        ):
+            res = public.post(
+                "/api/v1/public/interview/tok-keep-key/answer",
+                json={"audio_s3_key": _AUDIO_KEY},
+            )
+
+        assert res.status_code == 502
+        turn = self._turn(db, s, 1)
+        assert turn.audio_s3_key == _AUDIO_KEY, "다시 받아쓸 실마리가 사라졌다"
+        assert turn.transcript is None, "실패한 전사를 답변으로 저장하면 안 된다"
+        assert turn.answered_at is None, "지원자는 같은 질문에 다시 답할 수 있어야 한다"

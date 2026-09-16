@@ -59,9 +59,10 @@ FINDINGS_BACKEND_ENV = "AGENT_FINDINGS_BACKEND"
 # 실측). 표지를 뗀 나머지는 여전히 원문과 글자까지 같아야 하므로 보증은 그대로다.
 _LABEL = re.compile(r"^\s*(?:\[[^\]]{0,40}\]\s*)+")
 
-# 워커가 전사를 못 했을 때 넣는 자리표시자 — `[전사 지연 · 발화 8.9초]`.
-# 지원자가 한 말이 아니므로 서류와 맞춰 볼 재료가 아니다.
-_PLACEHOLDER = re.compile(r"^\s*\[전사")
+# 워커가 전사를 못 했을 때 넣는 자리표시자(`[전사 지연 · 발화 8.9초]`) 판별은
+# 면접 쪽에 하나로 모았다 (2026-09-16) — 재전사가 "다시 채울 칸"을 고르는 규칙과
+# 여기서 "맞춰 볼 말이 없는 칸"을 거르는 규칙이 같아야 한다.
+from app.interview.session_service import is_placeholder
 
 FINDINGS_MAX_TOKENS = 2000
 TURN_MAX_TOKENS = 800
@@ -341,7 +342,7 @@ def save_turn_findings(db, turn_id: int) -> int | None:
     if turn is None:
         return None
     said = (turn.transcript or "").strip()
-    if not said or _PLACEHOLDER.match(said):
+    if is_placeholder(said):
         # 말이 안 담겼거나 전사를 못 한 칸. 맞춰 볼 말이 없다 — 토큰을 쓰지 않는다
         return 0
 
