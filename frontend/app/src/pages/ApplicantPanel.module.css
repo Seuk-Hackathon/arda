@@ -978,6 +978,75 @@ details:not([open]) .sysSummary { margin-bottom: 0; }
    값이 없다고 줄표를 두지 않는다 — 빈 상태는 행동으로 바꾼다 */
 .evalRow { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); }
 
+/* 자동 판정 요약 패널 (2026-09-17).
+   점수를 상단에 크게 · 종합 평가 상세 링크는 아래에 작지만 눈에 띄게. */
+.summaryPanel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  align-items: flex-start;
+}
+.summaryScores {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+}
+.scoreChip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--sp-1);
+  padding: var(--sp-1) var(--sp-3);
+  border-radius: var(--radius-2);
+  background: var(--bg-2);
+  color: var(--fg-1);
+  font-weight: 500;
+}
+.scoreChipFinal {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--sp-1);
+  padding: var(--sp-1) var(--sp-3);
+  border-radius: var(--radius-2);
+  background: var(--accent-2);
+  color: var(--fg-accent);
+  font-weight: 600;
+  border: 1px solid var(--accent-1);
+}
+.scoreChipLabel {
+  font-size: var(--font-cap);
+  letter-spacing: var(--ls-cap);
+  color: var(--fg-2);
+  text-transform: none;
+}
+.scoreChipFinal .scoreChipLabel { color: var(--fg-accent); opacity: .85; }
+.scoreChipValue {
+  font-size: var(--font-lg);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.gradeBadge {
+  display: inline-block;
+  margin-left: var(--sp-1);
+  padding: 0 var(--sp-1);
+  border-radius: var(--radius-1);
+  background: var(--accent-1);
+  color: var(--bg-1);
+  font-size: var(--font-cap);
+  font-weight: 700;
+  line-height: 1.5;
+}
+.summaryDetailLink {
+  font-size: var(--font-sm);
+  color: var(--accent-1);
+  text-decoration: none;
+  padding: var(--sp-1) 0;
+}
+.summaryDetailLink:hover {
+  text-decoration: underline;
+  color: var(--fg-accent);
+}
+
 /* 점수 — .btnSm 은 글자 링크라 1~5 가 "12345" 로 붙어 버렸다 */
 .scoreRow { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
 .scoreLabel {
