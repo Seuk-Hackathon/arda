@@ -20,6 +20,7 @@ presigned URL 로 직접 내려받는다(shared/s3.py 머리말).
 """
 
 import io
+import os
 import re
 import secrets
 import time
@@ -242,12 +243,22 @@ def presign_download(
 
     if db.get(FileBlob, file_id) is not None:
         # 온프레미스 경로. 프론트가 `window.open(download_url)` 을 하니 절대 URL 이 필요하다.
-        # 리버스 프록시 뒤이므로 `request.url_for()` 는 내부 스킴/호스트를 낼 수 있어
-        # base 는 도메인 헤더에서 조립한다 (X-Forwarded-Proto 는 Caddy 가 세팅).
+        # base 는 세 순위로 정한다: (1) `PUBLIC_API_BASE_URL` 환경변수 — 온프레미스처럼
+        # 최종 스킴이 정해져 있을 때 이걸 못박아 둬야 안전하다 (2) `Cf-Visitor` — Cloudflare
+        # Tunnel 이 붙이는 원래 스킴, `{"scheme":"https"}` (3) 헤더/요청 스킴. 이유:
+        # cloudflared → Caddy 는 http 로 오므로 Caddy 는 `X-Forwarded-Proto: http` 를
+        # 붙여 넘긴다. 그 값으로 URL 을 만들면 브라우저가 https 페이지에서 mixed-content
+        # 로 막는다 (2026-09-17 실측).
         ticket = _issue_file_ticket(file_id, user.id)
-        scheme = request.headers.get("x-forwarded-proto") or request.url.scheme
-        host = request.headers.get("host") or request.url.netloc
-        base = f"{scheme}://{host}"
+        base = os.getenv("PUBLIC_API_BASE_URL", "").rstrip("/")
+        if not base:
+            cf_visitor = request.headers.get("cf-visitor") or ""
+            scheme = (
+                request.headers.get("x-forwarded-proto")
+                or ("https" if '"scheme":"https"' in cf_visitor else request.url.scheme)
+            )
+            host = request.headers.get("host") or request.url.netloc
+            base = f"{scheme}://{host}"
         url = f"{base}/api/v1/files/{file_id}/download?ticket={urllib.parse.quote(ticket)}"
         return PresignDownloadResponse(
             download_url=url,
