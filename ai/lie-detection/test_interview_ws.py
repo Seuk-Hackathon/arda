@@ -720,8 +720,6 @@ class TestPreserveAudio:
             self.fail_at = fail_at
 
         def _resp(self, payload: dict):
-            outer = self
-
             class R:
                 def raise_for_status(self):
                     pass
