@@ -6,34 +6,47 @@
 **핵심 계약**:
 - 인증: `Authorization: Bearer <company_api_key>` (bcrypt 대조).
 - Idempotent: 같은 `(integration_client_id, external_id)` 로 두 번 오면 기존 결과 반환.
-- 이력서: `resume.base64` 는 즉시 저장 · `resume.url` 은 Phase B 에서 비동기 다운로드.
+- 이력서: `resume.base64` 는 응답 전에 저장 · `resume.url` 은 응답 뒤 백그라운드에서
+  받는다(`app/application/resume_fetch.py` — 2026-09-17 Phase B). 어느 쪽이든 지원
+  폼과 같은 `files` 행이 되고, 그 뒤 요약·앵커가 돈다. **URL 을 못 받으면 요약을
+  돌리지 않는다** — 자동 심사(ADR-0034)가 이력서 없는 지원서를 떨어뜨리지 않게.
+- 같은 `external_id` 로 다시 오면서 이력서가 아직 없으면 **그때 다시 받는다.**
+  회사 쪽 재전송이 곧 재시도 경로다.
 
-**후속 (Phase B)**:
+**후속**:
 - Rate limit 검사 (`rate_limit_per_minute`)
 - Webhook 콜백 (상태 변경 시 회사 알림)
-- Resume URL 비동기 다운로드 (n8n or worker)
 - 관리 UI (API key 발급·회수)
 - SDK (Python · Node.js) 예시
 """
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
 import logging
 import secrets
-import uuid
 from datetime import UTC, datetime
 
 import bcrypt
-from fastapi import APIRouter, Depends, HTTPException, Request, status as http
-from pydantic import BaseModel, Field
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    HTTPException,
+    Request,
+    status as http,
+)
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.application import resume_fetch
 from app.db import get_db
 from app.deps import require_roles
-from app.models import Application, IntegrationClient, JobPosting, User
-from app.shared import s3
+from app.models import Application, IntegrationClient, JobPosting, StageHistory, User
+from app.shared.api.files import MAX_BYTES
 
 logger = logging.getLogger(__name__)
 
@@ -54,11 +67,24 @@ class ApplicantPayload(BaseModel):
 
 
 class ResumePayload(BaseModel):
-    """이력서 · `url` 또는 `base64` 하나. url 은 Phase B 에서 비동기 다운로드."""
+    """이력서 · `url` 또는 `base64` **정확히 하나**."""
 
-    url: str | None = Field(None, description="Arda 가 다운로드할 이력서 URL")
-    base64: str | None = Field(None, description="파일 자체 (base64 encoded)")
-    filename: str | None = Field(None, description="원본 파일명 (확장자 판정용)")
+    url: str | None = Field(
+        None, max_length=resume_fetch.MAX_URL_LEN,
+        description="Arda 가 내려받을 이력서 URL (http·https, 80·443)",
+    )
+    # 10MB 를 base64 로 싸면 4/3 배. 그보다 긴 문자열은 풀기 전에 막는다
+    base64: str | None = Field(
+        None, max_length=MAX_BYTES * 4 // 3 + 4,
+        description="파일 자체 (base64 encoded)",
+    )
+    filename: str | None = Field(None, max_length=255, description="원본 파일명")
+
+    @model_validator(mode="after")
+    def _exactly_one(self):
+        if (self.url is None) == (self.base64 is None):
+            raise ValueError("resume 은 url 과 base64 중 정확히 하나만 보낸다")
+        return self
 
 
 class IntegrationApplicationCreate(BaseModel):
@@ -106,33 +132,79 @@ def _client_from_header(
     raise HTTPException(http.HTTP_401_UNAUTHORIZED, "잘못된 API key 입니다")
 
 
-# ── 유틸 ────────────────────────────────────────────────────────────────
-def _save_resume_from_base64(
-    application_id: int, resume: ResumePayload
-) -> str | None:
-    """base64 로 온 이력서를 S3 에 저장하고 s3_key 반환."""
-    if not resume.base64:
-        return None
+# ── 이력서 ──────────────────────────────────────────────────────────────
+def _decode_base64(resume: ResumePayload) -> resume_fetch.Fetched:
+    """base64 로 온 이력서를 풀고 **지원 폼과 같은 규격**으로 본다.
+
+    Phase A 는 확장자를 파일명에서 믿고, 크기를 안 보고, 올린 키를 `files` 에 남기지
+    않았다 — S3 에는 올라가는데 담당자 화면에는 이력서가 없었다(2026-09-17 발견).
+    """
     try:
-        blob = base64.b64decode(resume.base64, validate=True)
-    except Exception as exc:  # noqa: BLE001
+        blob = base64.b64decode(resume.base64 or "", validate=True)
+    except (binascii.Error, ValueError) as exc:
         raise HTTPException(
-            http.HTTP_422_UNPROCESSABLE_ENTITY, f"base64 해석 실패: {exc}"
+            http.HTTP_422_UNPROCESSABLE_ENTITY, "resume.base64 를 풀 수 없습니다"
         ) from exc
+    if not blob:
+        raise HTTPException(http.HTTP_422_UNPROCESSABLE_ENTITY, "이력서 파일이 비었습니다")
+    if len(blob) > MAX_BYTES:
+        raise HTTPException(
+            http.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            f"이력서는 {MAX_BYTES // 1024 // 1024}MB 이하만 받습니다",
+        )
+    ext = resume_fetch.sniff(blob)
+    if ext is None:
+        raise HTTPException(
+            http.HTTP_422_UNPROCESSABLE_ENTITY,
+            "이력서는 PDF·DOCX·HWP·HWPX 만 받습니다",
+        )
+    return resume_fetch.Fetched(
+        data=blob, ext=ext, filename=resume_fetch.safe_filename(resume.filename, ext)
+    )
 
-    ext = "pdf"  # 기본. Phase B 에서 MIME sniffing 개선.
-    if resume.filename and "." in resume.filename:
-        ext = resume.filename.rsplit(".", 1)[-1].lower()[:10]
 
-    key = f"applications/{uuid.uuid4()}/resume.{ext}"
+def _find_existing(db: Session, client_id: int, external_id: str):
+    return db.scalar(
+        select(Application).where(
+            Application.integration_client_id == client_id,
+            Application.external_id == external_id,
+        )
+    )
+
+
+def _duplicate(
+    db: Session, existing: Application, payload: IntegrationApplicationCreate,
+    bg: BackgroundTasks,
+) -> IntegrationApplicationResponse:
+    """이미 받은 지원서. **이력서가 아직 없으면 이번에 온 것으로 다시 시도한다.**
+
+    URL 을 못 받았을 때 회사가 할 수 있는 일은 같은 요청을 다시 보내는 것뿐이다.
+    그걸 "이미 있음" 으로만 돌려보내면 그 지원자는 영영 이력서 없이 남는다.
+    지원자 정보는 바꾸지 않는다 — 이력서 칸만 채운다.
+    """
+    resume = payload.resume
+    if resume is not None and not resume_fetch.has_resume(db, existing.id):
+        if resume.url:
+            bg.add_task(resume_fetch.fetch_resume_bg, existing.id, resume.url)
+        else:
+            _store_or_502(db, existing.id, _decode_base64(resume))
+            db.commit()
+            bg.add_task(resume_fetch.after_resume, existing.id)
+    return IntegrationApplicationResponse(
+        arda_application_id=existing.id,
+        status="duplicate",
+        public_url=_public_url(existing),
+    )
+
+
+def _store_or_502(db: Session, application_id: int, fetched: resume_fetch.Fetched) -> None:
     try:
-        s3._client().put_object(Bucket=s3.BUCKET, Key=key, Body=blob)
+        resume_fetch.store(db, application_id, fetched)
     except Exception as exc:  # noqa: BLE001
+        db.rollback()
         logger.exception("이력서 S3 저장 실패 · application_id=%s", application_id)
-        raise HTTPException(
-            http.HTTP_502_BAD_GATEWAY, f"이력서 저장 실패: {exc}"
-        ) from exc
-    return key
+        # 지원서도 같이 롤백됐다. 회사가 같은 external_id 로 다시 보내면 된다
+        raise HTTPException(http.HTTP_502_BAD_GATEWAY, "이력서 저장에 실패했습니다") from exc
 
 
 # ── 엔드포인트 ──────────────────────────────────────────────────────────
@@ -143,6 +215,7 @@ def _save_resume_from_base64(
 )
 def create_application_via_integration(
     payload: IntegrationApplicationCreate,
+    bg: BackgroundTasks,
     client: IntegrationClient = Depends(_client_from_header),
     db: Session = Depends(get_db),
 ) -> IntegrationApplicationResponse:
@@ -151,19 +224,13 @@ def create_application_via_integration(
     같은 `external_id` 로 재요청하면 최초 생성한 지원서를 그대로 돌려 준다 —
     회사 쪽 재시도(네트워크 오류)가 중복 지원을 만들지 않게 한다.
     """
+    # 롤백 뒤에는 ORM 객체를 다시 읽어야 한다 — 먼저 값으로 잡아 둔다
+    client_id = client.id
+
     # 1. Idempotency 체크
-    existing = db.scalar(
-        select(Application).where(
-            Application.integration_client_id == client.id,
-            Application.external_id == payload.external_id,
-        )
-    )
+    existing = _find_existing(db, client_id, payload.external_id)
     if existing is not None:
-        return IntegrationApplicationResponse(
-            arda_application_id=existing.id,
-            status="duplicate",
-            public_url=_public_url(existing),
-        )
+        return _duplicate(db, existing, payload, bg)
 
     # 2. 공고 확인
     posting = db.scalar(
@@ -181,7 +248,12 @@ def create_application_via_integration(
             http.HTTP_422_UNPROCESSABLE_ENTITY, "birth_date 형식 오류 (YYYYMMDD)"
         ) from exc
 
-    # 4. 지원서 생성 (트랜잭션 안에서)
+    # 4. base64 이력서는 **지원서를 만들기 전에** 본다 — 규격 밖이면 아무것도 안 남긴다
+    inline = None
+    if payload.resume is not None and payload.resume.base64 is not None:
+        inline = _decode_base64(payload.resume)
+
+    # 5. 지원서 생성 (트랜잭션 안에서)
     app_row = Application(
         job_posting_id=posting.id,
         name=payload.applicant.name,
@@ -193,46 +265,50 @@ def create_application_via_integration(
         privacy_agreed_at=datetime.now(UTC),
         source=payload.source,
         external_id=payload.external_id,
-        integration_client_id=client.id,
+        integration_client_id=client_id,
     )
     db.add(app_row)
     try:
         db.flush()  # id 를 채운다
-    except Exception as exc:  # noqa: BLE001
+    except IntegrityError as exc:
         db.rollback()
         # UNIQUE (integration_client_id, external_id) 재확인 (레이스 조건)
-        existing = db.scalar(
-            select(Application).where(
-                Application.integration_client_id == client.id,
-                Application.external_id == payload.external_id,
-            )
-        )
+        existing = _find_existing(db, client_id, payload.external_id)
         if existing is not None:
-            return IntegrationApplicationResponse(
-                arda_application_id=existing.id,
-                status="duplicate",
-                public_url=_public_url(existing),
-            )
-        logger.exception("지원서 생성 실패")
+            return _duplicate(db, existing, payload, bg)
+        # 남은 것은 UNIQUE(job_posting_id, email) — 지원 폼과 같은 409.
+        # DB 오류 문구는 내보내지 않는다(제약 이름·값이 그대로 실린다)
         raise HTTPException(
-            http.HTTP_500_INTERNAL_SERVER_ERROR, f"지원서 생성 실패: {exc}"
+            http.HTTP_409_CONFLICT, "이 이메일로 이미 이 공고에 지원했습니다"
         ) from exc
 
-    # 5. 이력서 저장 (base64 만 · url 은 Phase B 에서 비동기)
-    if payload.resume and payload.resume.base64:
-        _save_resume_from_base64(app_row.id, payload.resume)
+    # D5 — 접수도 이력이다. 폼 접수와 같이 changed_by 는 NULL(시스템)
+    db.add(StageHistory(application_id=app_row.id, from_stage=None, to_stage="applied"))
+
+    # 6. base64 는 같은 트랜잭션에 `files` 행까지 넣는다
+    if inline is not None:
+        _store_or_502(db, app_row.id, inline)
 
     db.commit()
     logger.info(
-        "통합 지원서 생성 · client=%s external=%s application=%s",
-        client.name, payload.external_id, app_row.id,
+        "통합 지원서 생성 · client=%s external=%s application=%s resume=%s",
+        client_id, payload.external_id, app_row.id,
+        "url" if payload.resume and payload.resume.url else ("inline" if inline else "none"),
     )
+
+    # 7. 뒤에서 돌 것. URL 은 받은 뒤에 요약·앵커가 이어지고, 못 받으면 안내 메일만
+    if payload.resume is not None and payload.resume.url is not None:
+        bg.add_task(resume_fetch.fetch_resume_bg, app_row.id, payload.resume.url)
+    else:
+        bg.add_task(resume_fetch.after_resume, app_row.id)
 
     return IntegrationApplicationResponse(
         arda_application_id=app_row.id,
         status="received",
         public_url=_public_url(app_row),
     )
+
+
 
 
 def _public_url(app_row: Application) -> str | None:
