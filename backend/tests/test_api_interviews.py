@@ -1142,6 +1142,121 @@ class TestQuestionCounts:
         assert n == session_service.MAX_FOLLOWUPS_PER_SESSION == 3
 
 
+class TestSeedFallbackFirst:
+    """폴백을 세션과 같이 넣고, 맞춤 질문은 시작 전에만 바꿔 넣는다 (2026-09-17, 수택님 B2).
+
+    맞춤 질문은 뒤에서 LLM 으로 몇 초 걸린다. 그 사이 「시작」 하면 질문이 0개라
+    422 였다 — 시연처럼 링크를 만들자마자 누르는 자리에서 난다.
+    """
+
+    def _turns(self, db: Session, s: InterviewSession) -> list[str]:
+        db.expire_all()
+        return [
+            t.question
+            for t in db.scalars(
+                select(InterviewTurn)
+                .where(InterviewTurn.session_id == s.id)
+                .order_by(InterviewTurn.seq)
+            )
+        ]
+
+    def _claims(self, monkeypatch, n: int = 2):
+        monkeypatch.setattr(
+            "app.agent.interview_probe.sources_of",
+            lambda app, db=None: {"cover_letter": "글이 있다", "resume": "", "requirements": ""},
+        )
+        monkeypatch.setattr(
+            "app.agent.interview_probe.generate_probes",
+            lambda s: [{"claim": f"주장 {i}", "questions": [f"맞춤 {i}"]} for i in range(n)],
+        )
+
+    def test_뒤_작업이_안_끝나도_바로_시작할_수_있다(
+        self, as_user, public, db: Session, application: Application, admin_user: User
+    ):
+        from app.interview.session_service import DEFAULT_QUESTIONS
+
+        # 뒤 작업이 아직 안 돈 상태 — LLM 이 도는 중인 것과 같다
+        with patch("app.interview.api.interviews._seed_questions_bg"):
+            body = as_user(admin_user).post(
+                f"/api/v1/applications/{application.id}/interview-sessions", json={}
+            ).json()
+        token = body["token"]
+
+        assert public.post(
+            f"/api/v1/public/interview/{token}/consent", json={"agreed": True}
+        ).status_code == 200
+        res = public.post(f"/api/v1/public/interview/{token}/start")
+
+        assert res.status_code == 200, res.text
+        assert res.json()["status"] == "in_progress"
+        assert res.json()["current_question"] == DEFAULT_QUESTIONS[0]
+
+    def test_시작_전이면_맞춤_질문으로_바꾼다(
+        self, db: Session, application: Application, admin_user: User, monkeypatch
+    ):
+        from app.interview import session_service
+
+        s = _session(db, application, admin_user, token="tok-swap")
+        session_service.add_default_questions(db, s.id)
+        db.flush()
+        monkeypatch.setattr("app.db.SessionLocal", lambda: _SameSession(db))
+        self._claims(monkeypatch)
+
+        session_service.seed_questions_bg(s.id)
+
+        assert self._turns(db, s) == ["맞춤 0", "맞춤 1"]
+
+    def test_이미_시작했으면_폴백을_그대로_둔다(
+        self, db: Session, application: Application, admin_user: User, monkeypatch
+    ):
+        """진행 중에 질문이 바뀌면 지원자가 본 질문과 저장된 질문이 어긋난다."""
+        from app.interview import session_service
+
+        s = _session(db, application, admin_user, token="tok-started", status="in_progress")
+        session_service.add_default_questions(db, s.id)
+        db.flush()
+        monkeypatch.setattr("app.db.SessionLocal", lambda: _SameSession(db))
+        self._claims(monkeypatch)
+
+        session_service.seed_questions_bg(s.id)
+
+        assert self._turns(db, s) == list(session_service.DEFAULT_QUESTIONS)
+
+    def test_담당자가_고친_질문은_덮지_않는다(
+        self, db: Session, application: Application, admin_user: User, monkeypatch
+    ):
+        from app.interview import session_service
+
+        s = _session(db, application, admin_user, token="tok-edited")
+        _question(db, s)  # 담당자가 편집기로 넣은 질문
+        monkeypatch.setattr("app.db.SessionLocal", lambda: _SameSession(db))
+        self._claims(monkeypatch)
+
+        session_service.seed_questions_bg(s.id)
+
+        assert self._turns(db, s) == ["자기소개 부탁드립니다"]
+
+    def test_맞춤_질문이_없으면_폴백이_겹치지_않는다(
+        self, db: Session, application: Application, admin_user: User, monkeypatch
+    ):
+        from app.interview import session_service
+
+        s = _session(db, application, admin_user, token="tok-none")
+        session_service.add_default_questions(db, s.id)
+        db.flush()
+        monkeypatch.setattr("app.db.SessionLocal", lambda: _SameSession(db))
+        # 자료는 있는데 뽑힌 질문이 없다
+        monkeypatch.setattr("app.agent.interview_probe.generate_probes", lambda s: [])
+        monkeypatch.setattr(
+            "app.agent.interview_probe.sources_of",
+            lambda app, db=None: {"cover_letter": "글이 있다", "resume": "", "requirements": ""},
+        )
+
+        session_service.seed_questions_bg(s.id)
+
+        assert self._turns(db, s) == list(session_service.DEFAULT_QUESTIONS)
+
+
 class TestRetranscribe:
     """자리표시자로 남은 답변을 음성으로 다시 채운다 (2026-09-16).
 

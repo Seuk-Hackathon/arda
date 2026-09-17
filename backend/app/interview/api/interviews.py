@@ -96,6 +96,7 @@ def _to_out(session: InterviewSession) -> SessionOut:
 # 있어서 지금 지우면 깨진다. 새 테스트는 `session_service` 쪽으로.
 from app.interview.session_service import (
     LATE_ANSWER_GRACE,
+    add_default_questions as _add_default_questions,
     generate_followup_bg as _generate_followup_bg,
     remember_audio_key as _remember_audio_key,
     retranscribe_session as _retranscribe_session,
@@ -123,7 +124,11 @@ def create_session(
     그래서 링크를 다시 뽑아도 **이전 링크가 죽지 않는다** — 공고 public-link 와 다른 점이다.
 
     **질문은 뒤에서 자동으로 뽑는다** (2026-09-10, 팀장 결정). 자기소개서·이력서에서
-    꼬리 질문 최대 10개, 뽑을 게 없으면 폴백 3개. 담당자는 여전히 편집기로 덮어쓸 수 있다.
+    꼬리 질문 최대 4개. 담당자는 여전히 편집기로 덮어쓸 수 있다.
+
+    **폴백 3개는 세션과 같은 커밋에 먼저 넣는다** (2026-09-17). 만들자마자
+    「시작」 해도 422 가 나지 않는다 — 그 면접은 폴백으로 진행되고, 아직 시작 전이면
+    뒤의 생성이 맞춤 질문으로 바꿔 넣는다(`seed_questions_bg`).
     """
     application = PgApplicationRepository(db).get(application_id)
     if application is None:
@@ -139,6 +144,8 @@ def create_session(
         created_by=user.id,
     )
     db.add(session)
+    db.flush()
+    _add_default_questions(db, session.id)
     db.commit()
     db.refresh(session)
 
@@ -497,6 +504,9 @@ def start_interview(token: str, db: Session = Depends(get_db)):
     질문이 없으면 시작할 수 없다 — 빈 면접을 여는 것보다 낫다.
     """
     session = _get_by_token(db, token)
+    # 뒤에서 폴백을 맞춤 질문으로 바꾸는 작업(`seed_questions_bg`)과 겹치지 않게
+    # 같은 행을 잠그고 다시 읽는다 — 바꾸는 중이면 끝난 뒤의 질문으로 시작한다.
+    db.refresh(session, with_for_update=True)
 
     if session.status == "expired":
         raise HTTPException(HTTPStatus.GONE, "링크 유효 기간이 지났습니다")

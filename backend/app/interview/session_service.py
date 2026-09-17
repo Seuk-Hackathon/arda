@@ -16,10 +16,11 @@ from http import HTTPStatus
 
 from fastapi import HTTPException
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from app.adapter.outbound.pg.application_pg_repository import PgApplicationRepository
 from app.adapter.outbound.pg.interview_pg_repository import PgInterviewRepository
-from app.models import InterviewTurn
+from app.models import InterviewSession, InterviewTurn
 from app.shared import s3
 
 logger = logging.getLogger(__name__)
@@ -76,14 +77,51 @@ def is_placeholder(text: str | None) -> bool:
 LATE_ANSWER_GRACE = timedelta(minutes=10)
 
 
+def add_default_questions(db: Session, session_id: int) -> None:
+    """폴백 3개를 넣는다. 커밋은 부르는 쪽이 한다.
+
+    세션을 만드는 **같은 커밋**에 넣는다 (2026-09-17, 수택님 B2). 맞춤 질문은
+    뒤에서 LLM 으로 몇 초 걸려 만드는데, 그 사이 지원자가 「시작」 하면 질문이
+    0개라 422 였다 — 시연처럼 만들자마자 누르는 자리에서 난다.
+    """
+    for seq, q in enumerate(DEFAULT_QUESTIONS, start=1):
+        db.add(InterviewTurn(session_id=session_id, seq=seq, question=q))
+
+
+def _still_default(turns: list[InterviewTurn]) -> bool:
+    """세션을 만들 때 넣은 폴백 그대로인가 — 담당자가 고치지도, 지원자가 답하지도 않았다."""
+    return [t.question for t in turns] == list(DEFAULT_QUESTIONS) and all(
+        t.answered_at is None and t.transcript is None and t.audio_s3_key is None
+        for t in turns
+    )
+
+
+def _turns_of(db: Session, session_id: int) -> list[InterviewTurn]:
+    return list(
+        db.scalars(
+            select(InterviewTurn)
+            .where(InterviewTurn.session_id == session_id)
+            .order_by(InterviewTurn.seq)
+        )
+    )
+
+
 def seed_questions_bg(session_id: int) -> None:
     """세션 만든 직후 자동으로 꼬리질문을 뽑아 넣는다 (2026-09-10, 팀장 결정).
 
-    담당자가 매번 수동으로 질문을 넣던 번거로움을 없앤다. 뽑을 게 없으면 폴백
-    3개가 들어가므로 지원자는 어느 경우에도 "준비된 질문이 없습니다" 를 안 본다.
-    담당자는 이후에도 언제든 편집기로 덮어쓸 수 있다 (`set_questions`).
+    담당자가 매번 수동으로 질문을 넣던 번거로움을 없앤다. 담당자는 이후에도 언제든
+    편집기로 덮어쓸 수 있다 (`set_questions`).
 
-    실패해도 무해하다 — 로그만 남기고 세션은 그대로 (담당자가 수동으로 넣으면 됨).
+    **세션에는 이미 폴백 3개가 들어 있다** (2026-09-17, `add_default_questions`).
+    맞춤 질문이 나오면 그 폴백을 **바꿔 넣는데, 아래가 모두 맞을 때만**이다:
+    - 세션이 아직 `pending` 이다 — 진행 중인 면접의 질문을 바꾸면 지원자가 본 질문과
+      저장된 질문이 어긋난다
+    - 질문이 폴백 그대로다 — 그 사이 담당자가 편집기로 넣은 질문은 덮지 않는다
+
+    확인과 교체는 세션 행을 잠근 채 한다. `start_interview` 도 같은 행을 잠그므로
+    둘이 겹치면 하나가 끝난 뒤에 다른 하나가 본다.
+
+    실패해도 무해하다 — 로그만 남기고 세션은 그대로 (폴백으로 면접을 볼 수 있다).
     """
     from app.agent.interview_probe import generate_probes, sources_of
     from app.db import SessionLocal
@@ -93,11 +131,10 @@ def seed_questions_bg(session_id: int) -> None:
         if session is None:
             return
 
-        # 이미 질문이 있으면 덮어쓰지 않는다 — 담당자가 수동으로 먼저 넣은 경우
-        existing = db.scalar(
-            select(InterviewTurn).where(InterviewTurn.session_id == session_id)
-        )
-        if existing is not None:
+        # 폴백이 아닌 질문이 있으면 덮어쓰지 않는다 — 담당자가 수동으로 먼저 넣은 경우.
+        # 비어 있는 것은 이 변경 전에 만든 세션이다 — 예전처럼 채운다.
+        existing = _turns_of(db, session_id)
+        if existing and not _still_default(existing):
             return
 
         application = PgApplicationRepository(db).get(session.application_id)
@@ -131,18 +168,40 @@ def seed_questions_bg(session_id: int) -> None:
                 questions = [q for q in questions if q][:MAX_SEED_QUESTIONS]
 
         if not questions:
+            if existing:
+                # 폴백이 이미 들어 있다 — 바꿀 것이 없다
+                logger.info("면접 질문 자동 생성: session=%s 맞춤 질문 없음 · 폴백 유지", session_id)
+                return
             questions = list(DEFAULT_QUESTIONS)
 
         # LLM 이 도는 사이 담당자가 세션을 지웠을 수 있다 (2026-09-10 실측:
         # session 48 이 6초만에 삭제됐고, 그 뒤 이 훅이 INSERT 하다 FK 위반).
         # 재확인해 세션이 사라졌으면 조용히 종료 — 담당자가 만든 것을 지운 것이니
         # 그 위에 질문을 남기지 않는 편이 맞다.
-        if PgInterviewRepository(db).get_session(session_id) is None:
+        db.expire_all()
+        session = db.scalar(
+            select(InterviewSession)
+            .where(InterviewSession.id == session_id)
+            .with_for_update()
+        )
+        if session is None:
             logger.info(
                 "면접 질문 자동 생성 취소: session=%s (LLM 사이 세션이 삭제됨)",
                 session_id,
             )
             return
+
+        # LLM 이 도는 사이 지원자가 시작했거나 담당자가 질문을 고쳤을 수 있다
+        current = _turns_of(db, session_id)
+        if session.status != "pending" or (current and not _still_default(current)):
+            logger.info(
+                "면접 질문 자동 생성 취소: session=%s (LLM 사이 시작됐거나 질문이 바뀜 · status=%s)",
+                session_id, session.status,
+            )
+            return  # 잠금은 `with` 가 세션을 닫으며 푼다
+        for t in current:
+            db.delete(t)
+        db.flush()
 
         for seq, q in enumerate(questions, start=1):
             db.add(
