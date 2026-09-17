@@ -208,16 +208,56 @@ def _strip_fences(raw: str) -> str:
     return s.strip()
 
 
+def _repair_inner_quotes(s: str) -> str:
+    """문자열 안에 이스케이프 없이 들어간 큰따옴표를 `\\"` 로 바꾼다.
+
+    로컬 sLLM 이 `"…만든다"는 요구…"` 처럼 인용 부호를 그대로 써서 JSON 이 깨지는
+    일이 잦다 (2026-09-17 온프레미스 실측: 22건 중 2건, Ollama `format` 도 못 막음).
+    문자열 안에서 만난 `"` 뒤에 (공백을 건너뛰고) `,` `]` `}` `:` 가 오지 않으면
+    닫는 따옴표가 아니라 본문의 인용 부호로 본다. 정상 JSON 은 그대로 통과한다.
+    """
+    out: list[str] = []
+    in_str = False
+    i, n = 0, len(s)
+    while i < n:
+        ch = s[i]
+        if in_str:
+            if ch == "\\":
+                out.append(s[i : i + 2])
+                i += 2
+                continue
+            if ch == '"':
+                j = i + 1
+                while j < n and s[j] in " \t\r\n":
+                    j += 1
+                if j >= n or s[j] in ",]}:":
+                    in_str = False
+                    out.append(ch)
+                else:
+                    out.append('\\"')
+                i += 1
+                continue
+        elif ch == '"':
+            in_str = True
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
 def _parse_json(
     raw: str, step: str, application_id: int, stop_reason: str | None = None
 ) -> dict | None:
-    """JSON 파싱. 코드펜스가 있으면 벗기고 시도한다. 실패하면 None."""
+    """JSON 파싱. 코드펜스가 있으면 벗기고, 문자열 안 따옴표를 고쳐서도 시도한다. 실패하면 None."""
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
         pass
     try:
         return json.loads(_strip_fences(raw))
+    except json.JSONDecodeError:
+        pass
+    try:
+        return json.loads(_repair_inner_quotes(_strip_fences(raw)))
     except json.JSONDecodeError:
         if stop_reason == "max_tokens":
             # 프롬프트가 아니라 한도 문제다. 둘을 같은 로그로 뭉개면 다음 사람이

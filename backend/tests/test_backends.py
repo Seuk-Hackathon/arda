@@ -601,6 +601,19 @@ class TestStructuredOutput:
         assert _parse_json("이건 JSON이 아니다", "step1", 1) is None
         assert _parse_json('```json\n{"a":1}\n```', "step1", 1) == {"a": 1}
 
+    def test_parse_json_은_문자열_안_따옴표를_고쳐서_읽는다(self):
+        """로컬 sLLM 이 인용 부호를 이스케이프 없이 쓴 출력 (2026-09-17 온프레미스 실측)."""
+        from app.agent.summarizer import _parse_json
+
+        raw = '{"concerns": ["요건에 \'화면\'을 만든다"는 문장이 있음", "확인 필요"], "n": 1}'
+        assert _parse_json(raw, "step2", 1) == {
+            "concerns": ["요건에 '화면'을 만든다\"는 문장이 있음", "확인 필요"],
+            "n": 1,
+        }
+        # 정상 JSON·이스케이프된 따옴표는 그대로
+        ok = '{"a": "x \\"y\\" z", "b": ["p", "q"]}'
+        assert _parse_json(ok, "step1", 1) == {"a": 'x "y" z', "b": ["p", "q"]}
+
 
 # ── 스트리밍 (2차 최적화) ──────────────────────────────────────────
 #
