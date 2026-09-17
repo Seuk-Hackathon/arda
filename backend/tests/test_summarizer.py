@@ -269,6 +269,81 @@ class TestGenerateSummary:
         result = generate_summary(db, 999)
         assert result is None
 
+    # v2 신설: 이력서에서 뽑은 career_years 로 폼 값이 빈 자리를 채운다.
+    # 프론트가 career_years null 을 "신입" 이라 표시하는데(stage.ts) 이력서에는
+    # 경력이 있는 지원자들 (프로덕션 15명 발견 · 2026-09-17) 을 잡기 위한 것이다.
+    @patch.dict("os.environ", {"ANTHROPIC_API_KEY": "test-key"})
+    @patch("anthropic.Anthropic")
+    def test_career_years_filled_when_form_empty(self, mock_cls, fake_db):
+        step1_with_years = json.dumps({
+            "insufficient": False,
+            "gist": "요약",
+            "key_skills": ["Python"],
+            "key_experiences": ["3년 백엔드"],
+            "career_years": 5,
+        }, ensure_ascii=False)
+        mock_cls.return_value.messages.create.side_effect = [
+            FakeResponse(content=[FakeContent(text=step1_with_years)]),
+            FakeResponse(content=[FakeContent(text=STEP2_JSON)]),
+            FakeResponse(content=[FakeContent(text=STEP3_JSON)]),
+        ]
+
+        db, app = fake_db
+        app.career_years = None    # 폼 빈 자리
+        generate_summary(db, app.id)
+
+        assert app.career_years == 5
+        # 우정 리뷰 #294 제안: AI 로 채운 것을 doc_score_detail 에 표식으로 남긴다.
+        assert app.doc_score_detail.get("career_years_source") == "ai"
+
+    @patch.dict("os.environ", {"ANTHROPIC_API_KEY": "test-key"})
+    @patch("anthropic.Anthropic")
+    def test_career_years_form_wins_over_ai(self, mock_cls, fake_db):
+        # 폼에 지원자가 명시적으로 입력한 값은 AI 가 덮어쓰지 않는다.
+        step1_with_years = json.dumps({
+            "insufficient": False,
+            "gist": "요약",
+            "key_skills": ["Python"],
+            "key_experiences": ["7년 백엔드"],
+            "career_years": 7,
+        }, ensure_ascii=False)
+        mock_cls.return_value.messages.create.side_effect = [
+            FakeResponse(content=[FakeContent(text=step1_with_years)]),
+            FakeResponse(content=[FakeContent(text=STEP2_JSON)]),
+            FakeResponse(content=[FakeContent(text=STEP3_JSON)]),
+        ]
+
+        db, app = fake_db
+        app.career_years = 3       # 지원자가 폼에 3 입력
+        generate_summary(db, app.id)
+
+        assert app.career_years == 3   # AI 의 7 로 덮이지 않는다
+        # 폼 값 그대로면 AI 출처 표식이 없어 "신고값" 이 기본 가정.
+        assert "career_years_source" not in app.doc_score_detail
+
+    @patch.dict("os.environ", {"ANTHROPIC_API_KEY": "test-key"})
+    @patch("anthropic.Anthropic")
+    def test_career_years_ai_null_leaves_form_alone(self, mock_cls, fake_db):
+        # AI 가 null 을 내면 (근무 기간 표시 없음) 폼 값도 건드리지 않는다.
+        step1_ai_null = json.dumps({
+            "insufficient": False,
+            "gist": "요약",
+            "key_skills": ["Python"],
+            "key_experiences": ["프로젝트 경험"],
+            "career_years": None,
+        }, ensure_ascii=False)
+        mock_cls.return_value.messages.create.side_effect = [
+            FakeResponse(content=[FakeContent(text=step1_ai_null)]),
+            FakeResponse(content=[FakeContent(text=STEP2_JSON)]),
+            FakeResponse(content=[FakeContent(text=STEP3_JSON)]),
+        ]
+
+        db, app = fake_db
+        app.career_years = None
+        generate_summary(db, app.id)
+
+        assert app.career_years is None   # null 그대로
+
     @patch.dict("os.environ", {}, clear=True)
     def test_missing_api_key(self, fake_db):
         db, app = fake_db
