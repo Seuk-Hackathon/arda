@@ -25,7 +25,7 @@ from datetime import datetime, timezone
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Response, status
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -319,6 +319,68 @@ def mark_answered(token: str, seq: int, db: Session = Depends(get_db)):
         turn.answered_at = datetime.now(timezone.utc)
         db.commit()
     return AnsweredOut(seq=turn.seq, answered_at=turn.answered_at)
+
+
+class AnswerAudioIn(BaseModel):
+    audio_s3_key: str = Field(min_length=1, max_length=200)
+
+
+class AnswerAudioOut(BaseModel):
+    seq: int
+    audio_s3_key: str
+
+
+@router.post(
+    "/interview/{token}/turns/{seq}/audio",
+    response_model=AnswerAudioOut,
+    dependencies=[Depends(_require_service_token)],
+)
+def attach_answer_audio(
+    token: str, seq: int, body: AnswerAudioIn, db: Session = Depends(get_db)
+):
+    """이 회차의 **음성이 어디에 있는지**를 남긴다 (2026-09-16).
+
+    실시간 면접은 음성을 워커 메모리에만 두고 흘려보낸다 — 저장할 의무가 없고
+    쌓으면 지켜야 할 민감정보가 는다. 그런데 **전사가 실패하면** 그 답변은
+    `[전사 지연 · …]` 자리표시자로만 남고, 지원자가 실제로 한 말을 되살릴 방법이
+    없다 (2026-09-15 세션 75, ADR-0038).
+
+    그래서 **전사에 실패한 답변에 한해** 워커가 음성을 올리고 그 키를 여기에
+    남긴다. 담당자가 나중에 `POST /interview-sessions/{id}/retranscribe` 를 누르면
+    이 음성으로 다시 받아쓴다.
+
+    **전사는 여기서 하지 않는다.** 워커는 지원자를 기다리게 하지 않는 자리라
+    키만 받고 바로 돌려준다 — 실제 전사는 담당자가 부를 때 돈다.
+
+    **자리표시자가 아닌 답변은 거절한다**(409). 이미 글이 들어간 회차에 음성을
+    붙일 이유가 없고, 붙이면 담당자가 멀쩡한 답변을 다시 받아쓰게 된다.
+    """
+    from app.interview.session_service import AUDIO_KEY_RE, is_placeholder
+
+    if AUDIO_KEY_RE.match(body.audio_s3_key) is None:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, "잘못된 음성 파일 키입니다"
+        )
+
+    session = _find_session_or_404(db, token)
+    turn = db.scalar(
+        select(InterviewTurn).where(
+            InterviewTurn.session_id == session.id, InterviewTurn.seq == seq
+        )
+    )
+    if turn is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "그런 질문이 없습니다")
+    if not is_placeholder(turn.transcript):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "이미 받아쓴 답변입니다"
+        )
+
+    turn.audio_s3_key = body.audio_s3_key
+    db.commit()
+    logger.info(
+        "전사 실패 답변의 음성을 붙였다: session=%s seq=%s", session.id, seq
+    )
+    return AnswerAudioOut(seq=turn.seq, audio_s3_key=turn.audio_s3_key)
 
 
 # --- 이력서 사진: 워커가 대리응시를 확인할 때 쓴다 (회의 2026-09-09 3번) ---

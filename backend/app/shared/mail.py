@@ -35,6 +35,77 @@ AGENT_NAME = "아르"
 # 오타 하나가 지원자에게 그대로 나가는 것을 저장 시점에 막는다.
 TEMPLATE_VARS = ("{지원자명}", "{공고명}", "{회사명}", "{면접일시}", "{서명}")
 
+# ── 비밀번호 설정 링크 (2026-09-16, ADR-0033 개정) ─────────────────────
+#
+# **담당자가 편집하는 문구가 아니다.** 단계 메일(`_TEMPLATES`)은 회사가 말투를
+# 바꿔 쓰는 자리지만, 이 메일은 링크 하나를 전달하는 기능성 메일이고 문구를 잘못
+# 고치면 지원자가 계정을 못 연다. 그래서 DB 템플릿 경로를 타지 않는다.
+PASSWORD_SETUP_SUBJECT = "[{회사명}] 지원 현황 조회 비밀번호를 정해 주세요"
+
+_PASSWORD_SETUP_BODY = """안녕하세요.
+
+{회사명} 채용에 지원해 주셔서 감사합니다.
+아래 링크에서 비밀번호를 정하시면, 그 뒤로는 **이메일과 비밀번호**로 지원 현황을
+확인하실 수 있습니다.
+
+{링크}
+
+- 이 링크는 **{유효기간}일 동안, 한 번만** 쓸 수 있습니다.
+- 기한이 지났다면 로그인 화면에서 「설정 링크 다시 받기」를 눌러 주세요.
+- 본인이 요청하지 않으셨다면 이 메일은 무시하셔도 됩니다.
+
+{서명}"""
+
+
+def render_password_setup(db, url: str) -> tuple[str, str]:
+    """비밀번호 설정 메일의 (제목, 본문)."""
+    from app.hiring.company import name_for  # 순환 import 방지
+    from app.talent.applicant_password import TOKEN_DAYS
+
+    company_name = name_for(db)
+    values = {
+        "회사명": company_name,
+        "링크": url,
+        "유효기간": str(TOKEN_DAYS),
+        "서명": build_signature("applied", "system", None, company_name=company_name),
+    }
+    return fill(PASSWORD_SETUP_SUBJECT, values), fill(_PASSWORD_SETUP_BODY, values)
+
+
+# ── 이력서 누락 안내 (2026-09-17, ADR-0037 Phase B) ─────────────────────
+#
+# 회사 통합 API 로 온 지원서의 이력서 URL 을 받지 못했을 때 보낸다. 비밀번호 메일과
+# 같은 이유로 DB 템플릿을 타지 않는다 — 담당자가 말투를 고칠 자리가 아니다.
+# **회신을 권하지 않는다.** 시스템 메일에는 회신 주소가 없다.
+RESUME_MISSING_SUBJECT = "[{회사명}] {공고명} 지원서의 이력서 파일을 받지 못했습니다"
+
+_RESUME_MISSING_BODY = """안녕하세요, {지원자명}님.
+
+{회사명} {공고명} 포지션 지원서는 정상적으로 접수되었습니다.
+다만 함께 전달된 **이력서 파일을 받지 못했습니다.** 파일 링크가 만료되었거나,
+10MB를 넘거나, PDF·DOCX·HWP·HWPX 형식이 아닌 경우입니다.
+
+처음 지원하신 채용 페이지에서 이력서를 다시 제출해 주시거나, 해당 채용 담당자에게
+문의해 주세요. **이력서가 도착하기 전까지는 서류 심사가 진행되지 않습니다.**
+
+{서명}"""
+
+
+def render_resume_missing(db, app) -> tuple[str, str]:
+    """이력서 누락 안내의 (제목, 본문)."""
+    from app.hiring.company import name_for  # 순환 import 방지
+    from app.models import JobPosting
+
+    company_name = name_for(db)
+    posting = db.get(JobPosting, app.job_posting_id)
+    values = {
+        "회사명": company_name,
+        "공고명": posting.title if posting else "",
+        "지원자명": app.name,
+        "서명": build_signature("applied", "system", None, company_name=company_name),
+    }
+    return fill(RESUME_MISSING_SUBJECT, values), fill(_RESUME_MISSING_BODY, values)
+
 # 면접 일시도 스키마에 없다 (job_postings·applications 어디에도 컬럼이 없다).
 # 문구에서 그 자리는 비워 둘 수 없으므로 아래 문자열로 채우고, 컬럼이 생기면 바꾼다.
 INTERVIEW_AT_UNKNOWN = "별도 안내"
@@ -330,7 +401,11 @@ def _get_dispatcher():
     SQS·n8n 발행 로직은 각 어댑터(`adapter/outbound/mail/`)에 있다. 이 함수만 mock
     하면 publish 흐름을 격리 검증할 수 있다.
     """
-    from app.adapter.outbound.mail import N8nMailDispatcher, SqsMailDispatcher
+    from app.adapter.outbound.mail import (
+        N8nMailDispatcher,
+        SmtpMailDispatcher,
+        SqsMailDispatcher,
+    )
 
     # 2026-09-14 default 를 `n8n` 으로 (ADR-0036). 프로덕션에는 이미 명시돼 있고,
     # 로컬·테스트에서 unset 이었을 때 SQS 로 조용히 보내던 것을 막는다 — 워커가
@@ -339,6 +414,10 @@ def _get_dispatcher():
     dispatch = os.getenv("MAIL_DISPATCH", "n8n").strip().lower()
     if dispatch in {"worker", "sqs"}:
         return SqsMailDispatcher()
+    if dispatch == "smtp":
+        # n8n 없이 도는 경로 (2026-09-16). 리허설에서 n8n 을 내려 보거나,
+        # n8n 이 길게 죽었을 때 스위치 하나로 갈아탄다.
+        return SmtpMailDispatcher()
     return N8nMailDispatcher()
 
 
@@ -356,7 +435,31 @@ def publish(email_log_id: int, *, dispatcher=None) -> None:
     """
     if dispatcher is None:
         dispatcher = _get_dispatcher()
-    dispatcher.publish(email_log_id)
+    try:
+        dispatcher.publish(email_log_id)
+    except Exception:
+        # **못 실었으면 여기서 직접 보낸다** (2026-09-16, ADR-0031·ADR-0036 후속).
+        #
+        # 발송 경로가 n8n 하나뿐이라, 그것이 멈추면 합격·불합격 통보가 통째로
+        # 멎는다. 그 사실이 드러나는 것은 지원자가 "연락이 없다" 고 말할 때다.
+        # SMTP 설정이 있으면 그 자리에서 보내고, 없으면 예전처럼 예외를 올린다 —
+        # **설정이 없는데 조용히 다른 데로 보내지 않는다.**
+        from app.shared import mail_smtp
+
+        if isinstance(dispatcher, _smtp_dispatcher_type()) or not mail_smtp.available():
+            raise
+        logger.exception(
+            "메일 발행 실패 — SMTP 폴백으로 보낸다 email_log_id=%s", email_log_id
+        )
+        if not mail_smtp.send_log_id(email_log_id):
+            raise
+
+
+def _smtp_dispatcher_type():
+    """폴백이 자기 자신을 다시 부르지 않게 하는 확인용."""
+    from app.adapter.outbound.mail import SmtpMailDispatcher
+
+    return SmtpMailDispatcher
 
 
 

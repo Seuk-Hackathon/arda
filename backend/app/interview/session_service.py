@@ -57,6 +57,19 @@ AUDIO_KEY_RE = re.compile(
     r"answer\.([a-z0-9]{1,10})$"
 )
 
+# 전사를 못 했을 때 답변 자리에 들어가는 글 — `[전사 지연 · 발화 43.9초]` ·
+# `[전사 불가 · …]` · `[전사 없음]`. **지원자가 한 말이 아니다.**
+#
+# 빈 문자열을 넣지 않는 이유는 그러면 "말이 없었다"가 되어 답변이 버려지기
+# 때문이고(ADR-0038 결정 4), 그래서 이 글은 사람이 읽는 자리마다 걸러야 한다.
+# 대조(interview_findings)·재전사가 같은 규칙을 봐야 하므로 **여기서 한 번만** 정한다.
+PLACEHOLDER_RE = re.compile(r"^\s*\[전사")
+
+
+def is_placeholder(text: str | None) -> bool:
+    """이 글이 전사 실패 자리표시자인가. 비어 있어도 참이다 — 둘 다 답이 없다."""
+    return not (text or "").strip() or bool(PLACEHOLDER_RE.match(text or ""))
+
 # 끝난 면접에 늦게 도착한 전사를 받아 주는 시간 (2026-09-11). 워커 받아쓰기는
 # CPU 한 대에서 줄을 서서 몇 분씩 늦는다 — 세션 59 에서 [면접 종료] 3초 뒤 온
 # 전사가 409 로 버려졌다(수택님 로그). 이만큼 지난 뒤 오는 것은 받지 않는다.
@@ -199,6 +212,97 @@ def transcribe_answer(turn: InterviewTurn, key: str) -> str:
     turn.audio_duration_sec = result.get("audio_duration_sec")
     turn.stt_cost_usd = result.get("cost_usd")
     return text
+
+
+def remember_audio_key(db, turn: InterviewTurn, key: str) -> None:
+    """전사하기 **전에** 음성 키를 회차에 박고 커밋한다 (2026-09-16).
+
+    전사가 실패하면 예외가 올라가고 그 요청의 변경은 전부 사라진다 — 그러면
+    **S3 에 음성이 있는데 어느 회차의 것인지 아무도 모른다.** 2026-09-15 세션 75
+    에서 답변이 `[전사 지연]` 으로 남았을 때 되살릴 수 없었던 이유가 이것이다
+    (ADR-0038).
+
+    키만 남기고 `transcript`·`answered_at` 은 건드리지 않는다 — 지원자에게는
+    여전히 같은 질문이 보이고 다시 답할 수 있다. 달라지는 것은 **나중에
+    `retranscribe_session` 이 이 음성을 다시 집을 수 있다**는 것뿐이다.
+    """
+    if AUDIO_KEY_RE.match(key) is None:
+        raise HTTPException(
+            HTTPStatus.UNPROCESSABLE_ENTITY, "잘못된 음성 파일 키입니다"
+        )
+    if turn.audio_s3_key == key:
+        return
+    turn.audio_s3_key = key
+    db.commit()
+
+
+def retranscribe_session(db, session_id: int) -> dict:
+    """답이 비어 있거나 자리표시자인 회차를 음성으로 다시 채운다 (2026-09-16).
+
+    **되살릴 수 있는 것은 음성이 S3 에 남은 회차뿐이다.** 실시간 소켓 경로는
+    음성을 서버 메모리에만 두고 흘려보내므로, 그 경로로 잃은 답변은 여기서도
+    못 살린다 — 그쪽은 실패할 때 음성을 올리도록 별도로 고친다.
+
+    이미 글이 들어 있는 회차는 건드리지 않는다. 담당자가 몇 번을 눌러도 멀쩡한
+    답변을 덮어쓰지 않는다는 뜻이고, 실패한 것만 반복해서 다시 시도한다.
+    """
+    from app.agent import stt
+
+    turns = db.scalars(
+        select(InterviewTurn)
+        .where(InterviewTurn.session_id == session_id)
+        .order_by(InterviewTurn.seq)
+    ).all()
+
+    # 답이 없는 회차 중, 음성이 남은 것만 다시 시도할 수 있다. 나머지는 담당자에게
+    # "이건 못 살린다"고 그대로 말해 준다 — 조용히 빼면 눌러도 안 되는 것처럼 보인다.
+    empty = [t for t in turns if t.answered_at is not None and is_placeholder(t.transcript)]
+    targets = [t for t in empty if t.audio_s3_key]
+    no_audio = [t.seq for t in empty if not t.audio_s3_key]
+    filled: list[int] = []
+    failed: list[int] = []
+
+    for turn in targets:
+        matched = AUDIO_KEY_RE.match(turn.audio_s3_key or "")
+        if matched is None:
+            failed.append(turn.seq)
+            continue
+        try:
+            audio = s3.read_object(turn.audio_s3_key)
+            result = stt.transcribe(audio, filename=f"answer.{matched.group(1)}")
+        except Exception as exc:
+            logger.warning(
+                "재전사 실패: session=%s seq=%s %s",
+                session_id, turn.seq, type(exc).__name__,
+            )
+            failed.append(turn.seq)
+            continue
+
+        text = (result.get("raw") or "").strip()
+        if not text:
+            # 말이 안 담긴 녹음이다. 자리표시자를 그대로 두는 편이 낫다 —
+            # 빈 문자열로 덮으면 "답이 없었다"와 "못 알아들었다"가 섞인다.
+            failed.append(turn.seq)
+            continue
+
+        turn.transcript = text
+        turn.audio_duration_sec = result.get("audio_duration_sec")
+        turn.stt_cost_usd = result.get("cost_usd")
+        filled.append(turn.seq)
+
+    if filled:
+        db.commit()
+
+    logger.info(
+        "재전사: session=%s 대상=%s 채움=%s 실패=%s 음성없음=%s",
+        session_id, len(targets), len(filled), len(failed), len(no_audio),
+    )
+    return {
+        "candidates": len(targets),
+        "filled": filled,
+        "failed": failed,
+        "no_audio": no_audio,
+    }
 
 
 def generate_followup_bg(session_id: int, prev_turn_id: int) -> None:

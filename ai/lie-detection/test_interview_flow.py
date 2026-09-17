@@ -315,3 +315,181 @@ class TestOnlyButtonEnds:
             assert iw.ANSWER_STATS["by_limit"] == before + 1
             assert saved == [(1, "답변입니다")]
         asyncio.run(_t())
+
+
+async def _drain() -> None:
+    """뒤에서 도는 확인 task 가 끝날 때까지 기다린다.
+
+    `asyncio.sleep(0.05)` 같은 시간 대기로 두면 **기계가 바쁠 때 무작위로 깨진다** —
+    실제로 2026-09-16 에 컨테이너가 다른 일을 같이 할 때 두 번 깨졌다. 남은 task 를
+    직접 모아 기다리면 부하와 무관하게 같은 결과가 나온다.
+    """
+    pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+    if pending:
+        await asyncio.gather(*pending)
+
+
+class TestFinishedSessionStopsScoring:
+    """끝난 면접은 더 듣지 않는다 (2026-09-16, 앱 오너 실측).
+
+    지원자 쪽이 소켓을 안 닫으면 — 앱이 「면접 종료」 뒤에도 마이크를 놓지 않거나
+    웹 탭을 그냥 열어 두면 — 서버가 끝난 세션을 계속 판정했다. 실측에서 `scored`
+    가 10초에 하나씩 올랐고 **그 전부가 `no_face`** 라 통계까지 흐려졌다.
+
+    **소켓만 믿지 않는다** — 지원자 화면의 [면접 종료] 는 백엔드로 바로 가고
+    이 소켓은 통지를 못 받는다. 그래서 주기적으로 백엔드에 물어 스스로 멈춘다.
+    """
+
+    class _Client:
+        def __init__(self, status: str, fail: bool = False):
+            self.status = status
+            self.fail = fail
+            self.calls = 0
+
+        async def get(self, url, timeout=None):
+            self.calls += 1
+            if self.fail:
+                raise RuntimeError("망 끊김")
+            status = self.status
+
+            class R:
+                def raise_for_status(self):
+                    pass
+
+                def json(self):
+                    return {"status": status}
+
+            return R()
+
+    def _session(self):
+        s = srv.InterviewSession("tok-done")
+        s.last_done_check = 0.0
+        return s
+
+    def test_끝난_세션이면_멈춘다(self):
+        s = self._session()
+        asyncio.run(srv._check_done(self._Client("done"), s))
+        assert s.done is True
+
+    def test_진행_중이면_계속_듣는다(self):
+        s = self._session()
+        asyncio.run(srv._check_done(self._Client("in_progress"), s))
+        assert s.done is False
+
+    def test_못_물어보면_계속_듣는다(self):
+        """망이 흔들린다고 면접을 끊으면 잃는 것이 더 크다."""
+        s = self._session()
+        asyncio.run(srv._check_done(self._Client("done", fail=True), s))
+        assert s.done is False
+
+    def test_자주_묻지_않는다(self, monkeypatch):
+        """확인은 1분에 한 번이다 — 소리 조각마다 물으면 그게 부하다."""
+        s = self._session()
+        client = self._Client("in_progress")
+
+        async def run():
+            srv._schedule_done_check(client, s)
+            srv._schedule_done_check(client, s)   # 간격 안 — 또 물으면 안 된다
+            await _drain()
+            assert client.calls == 1
+
+            # 시계를 되감는 대신 마지막 확인 시각을 과거로 민다. `time.monotonic`
+            # 자체를 패치하면 **이벤트 루프의 시계까지 멈춰** 테스트가 걸린다.
+            s.last_done_check -= srv.DONE_CHECK_SEC + 1
+            srv._schedule_done_check(client, s)
+            await _drain()
+            assert client.calls == 2, "간격이 지났는데 안 물었다"
+
+        asyncio.run(run())
+
+    def test_소리_처리를_막지_않는다(self):
+        """확인은 HTTP 한 번이라 최악이면 10초다. 그 자리에서 기다리면 답변이 밀린다.
+
+        **시간을 재지 않는다** — 느린 기계에서 무작위로 깨진다. 대신 「예약 직후에는
+        아직 결과가 없다」로 본다: 그 자리에서 기다렸다면 돌아왔을 때 이미 `done`
+        이어야 하기 때문이다.
+        """
+        s = self._session()
+        client = self._Client("done")
+
+        async def run():
+            srv._schedule_done_check(client, s)
+            assert s.done is False, "예약이 아니라 그 자리에서 기다렸다"
+
+            await _drain()
+            assert s.done is True, "뒤에서 돌던 확인이 끝나면 멈춰야 한다"
+
+        asyncio.run(run())
+
+
+class TestTwoSocketsOneSession:
+    """한 면접에 소켓 둘 — 앱이 소리, 담당자 방이 얼굴 (2026-09-16, 앱 오너 요청).
+
+    앱은 09-09 개편에서 영상을 WebRTC 로 보내게 바뀌어 얼굴 JPEG 을 한 장도 안
+    보낸다. 서버는 WebRTC 미디어 경로에 없어 그 영상을 못 본다. 그런데 **담당자
+    방은 이미 그 영상을 받아 그리고 있다** — 거기서 프레임을 떠 보내면 된다.
+
+    소켓마다 세션을 새로 만들면 **각자 반쪽만** 쥐어 판정이 안 난다(소리만 →
+    `no_face`, 얼굴만 → `short_audio`). 그래서 토큰 하나에 세션 하나다.
+    """
+
+    def setup_method(self):
+        srv._SESSIONS.clear()
+        srv._SESSION_REFS.clear()
+
+    def test_같은_토큰이면_같은_세션을_쓴다(self):
+        a = srv._acquire_session("tok")
+        b = srv._acquire_session("tok")
+
+        assert a is b, "소켓마다 세션이 따로면 소리와 얼굴이 안 합쳐진다"
+        assert srv._SESSION_REFS["tok"] == 2
+
+    def test_다른_토큰은_섞이지_않는다(self):
+        assert srv._acquire_session("tok-a") is not srv._acquire_session("tok-b")
+
+    def test_하나가_빠져도_면접은_계속된다(self):
+        """담당자가 방을 닫아도 지원자 면접은 이어져야 한다 — 그 반대도 같다."""
+        session = srv._acquire_session("tok")
+        srv._acquire_session("tok")
+
+        assert srv._release_session("tok") == 1
+        assert srv._SESSIONS["tok"] is session
+
+    def test_마지막_하나가_빠지면_버린다(self):
+        srv._acquire_session("tok")
+        assert srv._release_session("tok") == 0
+        assert "tok" not in srv._SESSIONS
+
+    def test_담당자가_보낸_소리는_버린다(self):
+        """앱이 WebRTC 를 `audio: false` 로 열어 담당자가 받는 스트림엔 소리가 없다.
+
+        그 무음을 받아 두면 지원자 목소리에 섞여 전사가 망가진다.
+        """
+        session = srv._acquire_session("tok")
+        before = len(session.audio)
+
+        asyncio.run(
+            srv._on_binary(
+                None, None, session,
+                bytes([srv.KIND_AUDIO]) + b"\x00" * 640,
+                is_recruiter=True,
+            )
+        )
+
+        assert len(session.audio) == before, "담당자의 무음이 답변에 섞였다"
+
+    def test_담당자가_보낸_얼굴은_센다(self, monkeypatch):
+        session = srv._acquire_session("tok")
+        monkeypatch.setattr(
+            srv.iw, "face_row_search_full", lambda *_: ([0.0] * 7, 0, None)
+        )
+
+        asyncio.run(
+            srv._on_binary(
+                None, None, session,
+                bytes([srv.KIND_VIDEO]) + b"\xff\xd8fake",
+                is_recruiter=True,
+            )
+        )
+
+        assert session.frame_stats["recv"] == 1

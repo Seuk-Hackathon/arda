@@ -41,6 +41,21 @@ export default function Login() {
   const [password, setPassword] = useState('')
   /* 생년월일 8자리 — 지원자 칸에서만 쓴다 */
   const [birth, setBirth] = useState('')
+
+  /* 지원자가 무엇으로 들어오는가 (2026-09-16).
+
+     **생년월일이 계속 기본이다** — 지금 지원자는 대부분 비밀번호가 없다.
+     그래도 「비밀번호로 로그인」을 **늘 보이게** 둔다: 비밀번호를 정한 계정은
+     생년월일로 401 인데 그 문구가 공통이라(서버가 일부러 안 나눈다) 화면이
+     이유를 알려 줄 수 없다. 길이 늘 보이면 스스로 찾을 수 있고, 늘 보이므로
+     아무것도 새어 나가지 않는다. */
+  const [applicantMode, setApplicantMode] = useState<'birth' | 'password'>('birth')
+
+  /* 「비밀번호 설정 링크 받기」 — 페이지를 따로 파지 않는다. 칸이 이메일
+     하나뿐이라 여기 접었다 펴는 것으로 충분하다 */
+  const [setupOpen, setSetupOpen] = useState(false)
+  const [setupSent, setSetupSent] = useState(false)
+  const [setupPending, setSetupPending] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [pending, setPending] = useState(false)
   /* 세션당 1회. 판정은 마운트 시점에 한 번만 한다 — 렌더마다 다시 물으면
@@ -111,13 +126,20 @@ export default function Login() {
 
     if (role === 'applicant') {
       try {
-        const res = await applicantAuth.login(email.trim(), birth)
+        const res =
+          applicantMode === 'password'
+            ? await applicantAuth.loginWithPassword(email.trim(), password)
+            : await applicantAuth.login(email.trim(), birth)
         setApplicantToken(res.access_token)
         navigate('/my', { replace: true })
       } catch (err) {
         /* **사유를 지어내지 않는다.** 없는 이메일·틀린 생년월일·생년월일이
            없는 옛 지원서가 전부 같은 401 인 것이 서버의 설계다 — 화면이
-           "그런 이메일이 없습니다"라고 쓰면 지원 사실 자체가 새어 나간다. */
+           "그런 이메일이 없습니다"라고 쓰면 지원 사실 자체가 새어 나간다.
+
+           2026-09-16: **「비밀번호를 정하셨네요」도 마찬가지로 못 쓴다.**
+           비밀번호를 정한 계정이 생년월일로 들어오면 같은 401 인데, 화면이
+           그걸 갈라 말하면 서버가 감춘 것을 드러내는 꼴이다. */
         setError(err instanceof ApiError ? err.message : '잠시 후 다시 시도해 주세요')
         setPending(false)
       }
@@ -147,12 +169,42 @@ export default function Login() {
     if (next === role) return
     setRole(next)
     setError(null)
+    /* 칸을 옮기면 설정 패널도 접는다 — 담당자 칸에 지원자용 안내가 남아 있으면
+       담당자가 자기 것인 줄 안다 */
+    setSetupOpen(false)
+    setSetupSent(false)
+  }
+
+  /* 비밀번호 설정 링크를 메일로 보낸다.
+
+     **결과에 따라 문구를 가르지 않는다.** 서버가 지원 이력이 없어도 202 를
+     주는 것과 같은 이유다 — "그 이메일은 없습니다"라고 하면 이 화면이 "이
+     사람이 여기 지원했나"를 떠보는 도구가 된다(ADR-0033). */
+  async function sendSetupLink() {
+    const to = email.trim()
+    if (to === '' || setupPending) return
+    setSetupPending(true)
+    setError(null)
+    try {
+      await applicantAuth.requestPasswordSetup(to)
+    } catch {
+      /* 실패해도 같은 화면을 보여 준다. 여기서 갈라 말하면 위 원칙이 깨진다 —
+         정말 못 보냈으면 지원자는 메일이 안 오는 것으로 알게 되고, 다시
+         누르면 된다 */
+    } finally {
+      setSetupPending(false)
+      setSetupSent(true)
+    }
   }
 
   const disabled =
     pending ||
     email.trim() === '' ||
-    (role === 'staff' ? password.trim() === '' : birth.length !== 8)
+    (role === 'staff'
+      ? password.trim() === ''
+      : applicantMode === 'password'
+        ? password.trim() === ''
+        : birth.length !== 8)
 
   return (
     <div className={styles.page}>
@@ -223,6 +275,19 @@ export default function Login() {
                   disabled={pending}
                 />
               </label>
+            ) : applicantMode === 'password' ? (
+              <label className={styles.label}>
+                비밀번호
+                <input
+                  className={styles.input}
+                  type="password"
+                  autoComplete="current-password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="비밀번호"
+                  disabled={pending}
+                />
+              </label>
             ) : (
               <label className={styles.label}>
                 생년월일 8자리
@@ -243,6 +308,71 @@ export default function Login() {
             )}
 
             {error && <p className={styles.error} role="alert">{error}</p>}
+
+            {/* 지원자 칸에만 — 두 갈래를 오가는 길과 링크 받는 길.
+                **늘 보인다**: 401 이 왜 났는지 화면이 말해 줄 수 없으므로
+                (서버가 사유를 안 나눈다) 길이 늘 열려 있어야 한다 */}
+            {role === 'applicant' && (
+              <div className={styles.alt}>
+                <button
+                  type="button"
+                  className={styles.altLink}
+                  onClick={() => {
+                    setApplicantMode(applicantMode === 'birth' ? 'password' : 'birth')
+                    setError(null)
+                  }}
+                  disabled={pending}
+                >
+                  {applicantMode === 'birth' ? '비밀번호로 로그인' : '생년월일로 로그인'}
+                </button>
+                <span className={styles.altDot} aria-hidden="true">
+                  ·
+                </span>
+                <button
+                  type="button"
+                  className={styles.altLink}
+                  onClick={() => {
+                    setSetupOpen(!setupOpen)
+                    setSetupSent(false)
+                  }}
+                  disabled={pending}
+                >
+                  비밀번호 설정 링크 받기
+                </button>
+              </div>
+            )}
+
+            {role === 'applicant' && setupOpen && (
+              <div className={styles.setup}>
+                {setupSent ? (
+                  /* **보냈는지 안 보냈는지 가르지 않는다** — 지원 이력이 없어도
+                     서버가 202 를 주는 것과 같은 이유다 */
+                  <p className={styles.setupBody}>
+                    메일을 보냈습니다. 지원할 때 쓰신 이메일이라면 링크가 도착합니다.
+                    링크는 7일 동안 쓸 수 있습니다.
+                  </p>
+                ) : (
+                  <>
+                    <p className={styles.setupBody}>
+                      위 이메일로 비밀번호를 정할 수 있는 링크를 보내 드립니다.
+                      이미 정하신 분이 다시 정할 때도 같은 길입니다.
+                    </p>
+                    <button
+                      type="button"
+                      className={styles.setupSend}
+                      onClick={() => void sendSetupLink()}
+                      disabled={setupPending || email.trim() === ''}
+                    >
+                      {setupPending
+                        ? '보내는 중…'
+                        : email.trim() === ''
+                          ? '이메일을 먼저 적어 주세요'
+                          : '링크 보내기'}
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
           </div>
 
           <button type="submit" className="btn btn-primary" style={{ width: '100%' }} disabled={disabled}>

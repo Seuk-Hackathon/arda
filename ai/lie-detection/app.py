@@ -287,15 +287,65 @@ async def live(ws: WebSocket):
         logger.exception("실시간 데모 처리 중 오류")
 
 
+# 면접 하나에 소켓이 둘 붙을 수 있다 (2026-09-16, 앱 오너 요청).
+#
+# **왜 필요한가**: 앱은 2026-09-09 개편에서 영상을 WebRTC 로 보내게 바뀌어 얼굴
+# JPEG 을 한 장도 안 보낸다. 서버는 WebRTC 미디어 경로에 없어서(백엔드는 신호만
+# 중계한다) 그 영상을 볼 수 없다. 그런데 **담당자 방은 그 영상을 이미 받아 그리고
+# 있다** — 거기서 프레임을 떠 보내면 서버 변경 없이 얼굴 신호가 살아난다.
+#
+# 문제는 소리다. 앱이 WebRTC 를 `audio: false` 로 열기 때문에(안드로이드가
+# AudioRecord 를 하나만 준다) **담당자가 받는 스트림에는 소리가 없다.** 그래서
+# 소리는 원본을 가진 앱이, 얼굴은 이미 받은 담당자가 보내야 한다.
+#
+# 소켓마다 `InterviewSession` 을 새로 만들면 그 둘이 **각자 반쪽만** 쥐게 된다 —
+# 소리만 가진 세션은 `no_face`, 얼굴만 가진 세션은 `short_audio` 로 판정이 안 난다.
+# 그래서 토큰 하나에 세션 하나를 두고 **둘이 같은 장부에 기여**하게 한다.
+_SESSIONS: dict[str, InterviewSession] = {}
+_SESSION_REFS: dict[str, int] = {}
+
+
+def _acquire_session(token: str) -> InterviewSession:
+    """이 토큰의 세션을 가져오거나 만든다. 붙은 소켓 수를 센다."""
+    session = _SESSIONS.get(token)
+    if session is None:
+        session = InterviewSession(token)
+        _SESSIONS[token] = session
+    _SESSION_REFS[token] = _SESSION_REFS.get(token, 0) + 1
+    return session
+
+
+def _release_session(token: str) -> int:
+    """소켓 하나가 빠졌다. **마지막 하나가 빠질 때만** 세션을 버린다.
+
+    담당자가 방을 닫아도 지원자 면접은 계속돼야 하고, 그 반대도 마찬가지다.
+    """
+    left = _SESSION_REFS.get(token, 1) - 1
+    if left <= 0:
+        _SESSION_REFS.pop(token, None)
+        _SESSIONS.pop(token, None)
+        return 0
+    _SESSION_REFS[token] = left
+    return left
+
+
 @app.websocket("/ws/interview/{token}")
-async def interview(ws: WebSocket, token: str):
-    """지원자 화면과 이어지는 연결. 프로토콜은 PROTOCOL.md 가 원본이다.
+async def interview(ws: WebSocket, token: str, role: str = "applicant"):
+    """면접 소켓. 프로토콜은 PROTOCOL.md 가 원본이다.
+
+    `role` 로 두 갈래다 (2026-09-16).
+
+    - `applicant` (기본) — 지원자 기기. 소리를 보내고 질문을 받는다. 예전과 같다.
+    - `recruiter` — 담당자 방. **얼굴 프레임만 보낸다.** 질문·답변 흐름에는
+      끼지 않는다: 질문을 두 벌 보내면 담당자 화면이 지원자 화면 행세를 하게 되고,
+      [답변 완료] 가 두 곳에서 눌리면 답변이 엉킨다.
 
     **미디어를 파일로 만들지 않는다.** 오디오는 발화 한 번 동안만 메모리에 있다가
     전사된 뒤 버려지고, 영상 프레임은 받는 즉시 신호로 바뀌고 사라진다.
     """
     await ws.accept()
-    session = InterviewSession(token)
+    is_recruiter = role == "recruiter"
+    session = _acquire_session(token)
 
     async with httpx.AsyncClient() as client:
         try:
@@ -313,6 +363,18 @@ async def interview(ws: WebSocket, token: str):
                 {"type": "error", "message": "진행 중인 면접이 아닙니다", "status": state.get("status")}
             )
             await ws.close()
+            return
+
+        if is_recruiter:
+            # 담당자 방은 **얼굴만 보낸다.** 질문 목록도, 이력서 사진도, 첫 질문도
+            # 필요 없다 — 지원자 소켓이 이미 쥐고 있다. 여기서 또 받으면 같은 세션에
+            # 두 번 써 넣는 꼴이고, 질문을 보내면 담당자 화면이 지원자 행세를 한다.
+            logger.info(
+                "면접 연결(담당자 얼굴): token=%s 붙은 소켓 %s개",
+                token[:8], _SESSION_REFS.get(token, 1),
+            )
+            await ws.send_json({"type": "ready", "role": "recruiter"})
+            await _pump(ws, client, session, token, is_recruiter=True)
             return
 
         # 질문 전체를 먼저 받아 둔다. 이게 있어야 전사를 안 기다리고 다음 질문을
@@ -338,51 +400,99 @@ async def interview(ws: WebSocket, token: str):
             }
         )
 
-        try:
-            while True:
-                msg = await ws.receive()
+        await _pump(ws, client, session, token, is_recruiter=False)
 
-                if msg.get("type") == "websocket.disconnect":
-                    # **끊김을 남긴다** (2026-09-11). 세션 59 에서 폰에 "연결이 끊겨 다시
-                    # 잇는 중" 이 반복됐는데 서버 로그에 아무것도 없어 누가 끊었는지 못 갈랐다.
-                    # 1000·1001 은 앱이 닫은 것, 1006 은 망이 끊긴 것, 1011 은 서버가 버거운 것
-                    logger.info(
-                        "면접 연결 끊김: token=%s code=%s",
-                        token[:8], msg.get("code"),
-                    )
-                    break
 
-                data = msg.get("bytes")
-                if data:
-                    await _on_binary(ws, client, session, data)
+async def _pump(
+    ws, client, session: InterviewSession, token: str, *, is_recruiter: bool
+) -> None:
+    """소켓 하나에서 오는 것을 받아 넘긴다. 끝나면 세션 참조를 놓는다."""
+    who = "담당자" if is_recruiter else "지원자"
+    try:
+        while True:
+            msg = await ws.receive()
+
+            if msg.get("type") == "websocket.disconnect":
+                # **끊김을 남긴다** (2026-09-11). 세션 59 에서 폰에 "연결이 끊겨 다시
+                # 잇는 중" 이 반복됐는데 서버 로그에 아무것도 없어 누가 끊었는지 못 갈랐다.
+                # 1000·1001 은 앱이 닫은 것, 1006 은 망이 끊긴 것, 1011 은 서버가 버거운 것
+                logger.info(
+                    "면접 연결 끊김(%s): token=%s code=%s %s",
+                    who, token[:8], msg.get("code"), _frame_tally(session),
+                )
+                break
+
+            data = msg.get("bytes")
+            if data:
+                await _on_binary(ws, client, session, data, is_recruiter=is_recruiter)
+                continue
+
+            text = msg.get("text")
+            if text:
+                if is_recruiter:
+                    # 담당자 방은 답변 흐름에 끼지 않는다 — [답변 완료] 가 두 곳에서
+                    # 눌리면 같은 답변이 두 번 끝난다. ping 만 받아 준다.
+                    if text.strip().startswith("{") and '"ping"' in text:
+                        await ws.send_json({"type": "pong"})
                     continue
+                await _on_text(ws, client, session, text)
 
-                text = msg.get("text")
-                if text:
-                    await _on_text(ws, client, session, text)
+    except WebSocketDisconnect:
+        # 연결이 끊긴 것 자체는 오류가 아니다. 답변은 백엔드에 이미 저장돼 있고,
+        # 지원자가 다시 들어오면 안 한 질문부터 이어진다.
+        logger.info("면접 연결 종료(%s): token=%s %s", who, token[:8], _frame_tally(session))
+    except Exception:
+        logger.exception("면접 처리 중 오류(%s): token=%s", who, token[:8])
+    finally:
+        left = _release_session(token)
+        if left:
+            logger.info("소켓 하나가 빠졌다 — 남은 %s개: token=%s", left, token[:8])
 
-        except WebSocketDisconnect:
-            # 연결이 끊긴 것 자체는 오류가 아니다. 답변은 백엔드에 이미 저장돼 있고,
-            # 지원자가 다시 들어오면 안 한 질문부터 이어진다.
-            logger.info("면접 연결 종료: token=%s", token[:8])
-        except Exception:
-            logger.exception("면접 처리 중 오류: token=%s", token[:8])
+
+def _frame_tally(session: InterviewSession) -> str:
+    """이 면접 하나의 프레임 장부를 로그 한 줄로 (2026-09-16, 앱 오너 요청).
+
+    `/health` 의 `frames` 는 **프로세스 전역 누적**이라 면접이 겹치거나 컨테이너가
+    다시 뜨면 어느 면접의 숫자인지 알 수 없다. 앱 화면의 「얼굴 N · 실패 M」 과
+    나란히 놓고 **「앱이 안 보낸 것」과 「서버가 못 찾은 것」을 가르려면** 한 면접
+    안의 숫자여야 한다. 토큰 앞 8자가 같은 줄에 있어 세션과 바로 짝지어진다.
+
+    읽는 법: `recv` 는 소켓이 받은 장수(앱의 전송 수와 맞춰 본다) · `dropped_busy`
+    는 서버가 앞 장을 보는 중이라 버린 것 · `in` 은 분석에 들어간 것 · `face` 는
+    얼굴을 찾은 것. `recv=0` 이면 앱, `face=0` 인데 `in>0` 이면 서버 쪽이다.
+    """
+    s = session.frame_stats
+    return (
+        f"프레임 recv={s['recv']} 버림={s['dropped_busy']} "
+        f"분석={s['in']} 얼굴={s['face']}"
+    )
 
 
-async def _on_binary(ws, client, session: InterviewSession, data: bytes) -> None:
+async def _on_binary(
+    ws, client, session: InterviewSession, data: bytes, *, is_recruiter: bool = False
+) -> None:
     kind, payload = data[0], data[1:]
+
+    if is_recruiter and kind != KIND_VIDEO:
+        # 담당자 방이 보내는 소리는 **무음이다.** 앱이 WebRTC 를 `audio: false` 로
+        # 열어(안드로이드가 AudioRecord 를 하나만 준다) 담당자가 받는 스트림에는
+        # 소리 트랙이 없다. 그걸 받아 두면 지원자 목소리에 무음이 섞여 전사가
+        # 망가진다 — 얼굴만 받는다.
+        return
 
     if kind == KIND_VIDEO:
         # **받은 즉시 센다.** `add_frame` 안에서 세면 아래 `face_busy` 로 버린 것이
         # "안 온 것"과 구별되지 않는다 — 2026-09-10 실측에서 `in=0` 을 보고도
         # 앱이 안 보낸 것인지 서버가 버린 것인지 갈리지 않았다.
         iw.FRAME_STATS["recv"] += 1
+        session.frame_stats["recv"] += 1
 
         # `/ws/live` 와 같은 이유로 스레드에서, 도는 중이면 버린다 (`add_frame` 의
         # FRAME_STRIDE 는 그 안에서 그대로 적용된다). 프레임 하나가 mediapipe 를
         # 두 번(특징 + 얼굴 대조) 타므로 이벤트 루프에서 부르면 오디오까지 늦는다.
         if session.face_busy:
             iw.FRAME_STATS["dropped_busy"] += 1
+            session.frame_stats["dropped_busy"] += 1
         if not session.face_busy:
             session.face_busy = True
 
@@ -402,6 +512,18 @@ async def _on_binary(ws, client, session: InterviewSession, data: bytes) -> None
 
     if kind != KIND_AUDIO:
         return
+
+    # **끝난 면접은 더 듣지 않는다** (2026-09-16, 앱 오너 보고). 지원자 쪽이 소켓을
+    # 안 닫으면 — 앱이 「면접 종료」 뒤에도 마이크를 놓지 않거나, 웹 탭을 그냥
+    # 열어 두면 — 서버가 끝난 세션을 계속 판정한다. 실측에서 `scored` 가 10초에
+    # 하나씩 올랐고 그 전부가 `no_face` 라 통계까지 흐려졌다.
+    #
+    # **소켓만 믿지 않는다.** 지원자 화면이 종료를 백엔드로 직접 보내는 경로도
+    # 있어서(면접 종료 버튼), 이쪽은 아무 통지를 못 받는다. 그래서 주기적으로
+    # 백엔드에 상태를 물어 스스로 닫는다.
+    if session.done:
+        return
+    _schedule_done_check(client, session)
 
     event = session.add_audio(payload)
 
@@ -524,6 +646,25 @@ async def _end_answer(ws, client, session: InterviewSession) -> None:
         "전사 끝: token=%s seq=%s 소리 %.1f초 · %d자",
         session.token[:8], seq, seconds, len(transcript),
     )
+
+    # **받아쓰지 못했으면 음성이라도 남긴다** (2026-09-16). 자리표시자만 저장하면
+    # 지원자가 한 말이 어디에도 없다 — 세션 75 가 그랬다(ADR-0038). 담당자가
+    # 나중에 「다시 받아쓰기」를 누르면 이 음성으로 글을 채운다.
+    #
+    # **실패해도 면접은 그대로 간다** — 못 남기면 지금까지와 같은 상태일 뿐이라
+    # 여기서 답변 저장을 막으면 잃는 것이 오히려 커진다.
+    if iw.is_placeholder(transcript):
+        try:
+            key = await iw.preserve_audio(client, session.token, seq, pcm)
+            logger.info(
+                "전사 실패 — 음성을 남겼다: token=%s seq=%s key=%s",
+                session.token[:8], seq, key,
+            )
+        except Exception:
+            logger.exception(
+                "음성 보존 실패: token=%s seq=%s — 자리표시자만 남는다",
+                session.token[:8], seq,
+            )
     signal = session.signal(rows)
     if signal:
         logger.info("표정 신호: token=%s %s", session.token[:8], signal)
@@ -582,7 +723,58 @@ async def _close(ws, client, session: InterviewSession) -> None:
         await finish_interview(client, session.token)
     except Exception:
         logger.exception("면접 종료 처리 실패: token=%s", session.token[:8])
+    # **여기서부터는 더 듣지 않는다** (2026-09-16). 지원자 쪽이 소켓을 안 닫아도
+    # 판정이 계속 돌지 않게 표시부터 남긴다 — 소켓을 닫는 것은 클라이언트 몫이라
+    # 우리가 기다릴 수 없다.
+    session.done = True
     await ws.send_json({"type": "done"})
+
+
+# 끝났는지 백엔드에 다시 물어보는 간격. 면접 하나가 보통 10~20분이라 1분이면
+# 늦어도 1분 안에 멈춘다. 공개 조회 경로라 가볍다.
+DONE_CHECK_SEC = 60.0
+
+
+def _schedule_done_check(client, session: InterviewSession) -> None:
+    """끝났는지 확인을 **뒤에서** 돌린다. 소리 처리를 막지 않는다.
+
+    이 확인은 HTTP 한 번이라 최악이면 10초를 기다린다. 소리 경로에서 그대로
+    기다리면 그동안 들어온 조각이 밀려 답변이 늦게 끝난다.
+    """
+    now = time.monotonic()
+    if now - session.last_done_check < DONE_CHECK_SEC:
+        return
+    session.last_done_check = now
+    asyncio.create_task(_check_done(client, session))
+
+
+async def _check_done(client, session: InterviewSession) -> None:
+    """이 면접이 **다른 경로로** 끝났으면 `session.done` 을 세운다 (2026-09-16).
+
+    지원자 화면의 [면접 종료] 는 백엔드로 바로 간다 — 이 소켓은 통지를 못 받는다.
+    그 뒤에도 마이크가 흐르면 서버는 끝난 세션을 계속 판정한다(앱 오너 실측:
+    종료 뒤에도 `scored` 가 10초에 하나씩, 전부 `no_face`).
+
+    **못 물어보면 계속 듣는다.** 망이 흔들린다고 면접을 끊으면 잃는 것이 더 크다.
+    """
+    try:
+        r = await client.get(
+            f"{iw.BACKEND_URL}/api/v1/public/interview/{session.token}", timeout=10
+        )
+        r.raise_for_status()
+        status = (r.json() or {}).get("status")
+    except Exception:
+        logger.warning("면접 상태 확인 실패: token=%s", session.token[:8])
+        return
+
+    if status == "in_progress":
+        return
+
+    session.done = True
+    logger.info(
+        "다른 경로로 끝난 면접이라 판정을 멈춘다: token=%s status=%s %s",
+        session.token[:8], status, _frame_tally(session),
+    )
 
 
 async def _drop_other_voice(session: InterviewSession, pcm: bytes) -> bytes:

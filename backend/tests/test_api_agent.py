@@ -108,6 +108,37 @@ class TestSummarize:
         data = resp.json()
         assert "summary" in data
 
+    def test_재생성_뒤_미판정_지원자_심사를_부른다(self, client: TestClient, application: Application):
+        """조건 판단은 screening.decide_if_never_decided 가 한다 — 여기서는 부르는지만."""
+        with (
+            patch("app.application.api.agent.get_summary_backend", return_value=self._available_backend()),
+            patch("app.application.api.agent.generate_summary", return_value='{"gist":"요약"}'),
+            patch("app.application.screening.decide_if_never_decided") as decide,
+        ):
+            resp = client.post(f"/api/v1/agent/applications/{application.id}/summarize")
+        assert resp.status_code == 200
+        decide.assert_called_once()
+        assert decide.call_args.args[1].id == application.id
+
+    def test_심사가_실패해도_요약_응답은_준다(self, client: TestClient, application: Application):
+        with (
+            patch("app.application.api.agent.get_summary_backend", return_value=self._available_backend()),
+            patch("app.application.api.agent.generate_summary", return_value='{"gist":"요약"}'),
+            patch("app.application.screening.decide_if_never_decided", side_effect=RuntimeError("boom")),
+        ):
+            resp = client.post(f"/api/v1/agent/applications/{application.id}/summarize")
+        assert resp.status_code == 200
+        assert resp.json()["summary"] == '{"gist":"요약"}'
+
+    def test_요약_실패면_심사를_부르지_않는다(self, client: TestClient, application: Application):
+        with (
+            patch("app.application.api.agent.get_summary_backend", return_value=self._available_backend()),
+            patch("app.application.api.agent.generate_summary", return_value=None),
+            patch("app.application.screening.decide_if_never_decided") as decide,
+        ):
+            client.post(f"/api/v1/agent/applications/{application.id}/summarize")
+        decide.assert_not_called()
+
     def test_not_found(self, client: TestClient):
         with patch("app.application.api.agent.generate_summary"):
             resp = client.post("/api/v1/agent/applications/999999/summarize")

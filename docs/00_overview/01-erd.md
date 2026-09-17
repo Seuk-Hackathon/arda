@@ -1,6 +1,10 @@
 # 01. 테이블 정의서 (ERD)
 
-> **상태: 확정 v2.3 · 2026-09-11** — v2.3: `interview_findings.turn_id` 추가 — 서류 대조를 **답변마다** 만들어 그 답변에 붙인다(담당자 화상 방이 답변 밑에 띄운다). NULL 허용이라 기존 행 영향 없음. **alembic `0019`**. 같은 날 `interview_turns.answered_at`(**alembic `0018`**)도 들어갔다 — 표에만 반영돼 있던 것을 여기 함께 적는다.
+> **상태: 확정 v2.7 · 2026-09-17** — v2.7: **`file_blobs`** 추가(**alembic `0026`**, #282 온프레미스 다운로드). #282 에서는 `0023` 으로 들어와 **기존 `0023`(applicant_password)과 번호가 겹쳤다** — 운영 DB 에서 표가 안 생기는 문제라 0026 으로 옮기고 "없을 때만 만든다"로 고쳤다. 번호 중복은 이제 `tests/test_alembic_revisions.py` 가 CI 에서 막는다.
+> v2.6 · 2026-09-17 — v2.6: `email_logs.stage` 에 **`resume_missing`** 허용(**alembic `0025`**). 회사 통합 API 로 온 이력서 URL 을 받지 못했다고 지원자에게 알리는 기능성 메일([ADR-0037](../03_decision/0037-회사-통합-API.md) Phase B). 0024 와 같은 사고를 피하려고 코드와 같은 커밋에 넣었다.
+> v2.5 · 2026-09-16 — v2.5: `email_logs.stage` 에 **`password_setup`** 허용(**alembic `0024`**). 비밀번호 설정 링크 메일은 어느 전형 단계에도 안 붙는 기능성 메일이라 `custom`(담당자가 직접 쓴 메일)과도 구별한다. **운영에서 실제로 막혔던 것** — 제약이 거부해 INSERT 가 실패했고 백그라운드라 요청은 202 로 끝나 아무도 몰랐다.
+> v2.4 · 2026-09-16 — v2.4: 지원자 비밀번호 로그인 2테이블 `applicant_credentials`·`applicant_password_tokens` 추가 ([ADR-0033](../03_decision/0033-지원자-앱-로그인.md) 개정). 신규 테이블만 만들므로 기존 행 영향 없음. **alembic `0023`**.
+> v2.3 · 2026-09-11 — v2.3: `interview_findings.turn_id` 추가 — 서류 대조를 **답변마다** 만들어 그 답변에 붙인다(담당자 화상 방이 답변 밑에 띄운다). NULL 허용이라 기존 행 영향 없음. **alembic `0019`**. 같은 날 `interview_turns.answered_at`(**alembic `0018`**)도 들어갔다 — 표에만 반영돼 있던 것을 여기 함께 적는다.
 > v2.2 · 2026-09-10 — v2.2: **자동 심사**([ADR-0034](../03_decision/0034-에이전트-자동심사.md)). `job_postings.pass_threshold`·`screening_mode`, 신규 `posting_interviewers`(공고별 기본 면접관 풀), `applications.doc_score`·`doc_score_detail`·`doc_decision`·`doc_decided_at`·`decision_source`, `interview_sessions.ai_score`·`ai_score_detail`·`truth_samples`·`scored_at`, `company_profile.scoring_weights`·`talent_profile`. 전부 NULL 허용 또는 기본값이라 기존 행 영향 없음. **alembic `0016`**. 0013·0014 가 만든 `company_profile`·공고 상세 컬럼도 이 판에서 문서에 반영했다(코드가 먼저였다).
 > v2.1 · 2026-09-04 — v2.1: `chain_publications.proof` 추가(OpenTimestamps 증명 보관 — EVM 체인(운영 Sepolia)은 `tx_hash` 만 있으면 되지만 OTS 는 증명 파일이 근거다) + `(network, chain_hash)` 부분 유일 인덱스로 **같은 머리를 같은 네트워크에 두 번 올리는 것**만 막는다. **alembic `0009`**.
 > v2.0 · 2026-09-04 — v2.0: 사슬 머리를 공개 체인에 못 박은 기록 `chain_publications` 추가, `document_anchors` 의 `ots_status`·`ots_proof` **제거**(아무도 쓴 적 없는 칸이고, 열려 있으면 그게 원장의 유일한 구멍이 된다). 이제 `document_anchors` 는 **UPDATE 가 아예 안 되는 표**다. **alembic `0008`** ([ADR-0028](../03_decision/0028-제출물-무결성-앵커.md) 2단계).
@@ -146,8 +150,8 @@ UNIQUE(job_posting_id, user_id).
 | current_stage | varchar(20) | NOT NULL, default `applied` | 위 stage enum |
 | privacy_agreed_at | timestamptz | NOT NULL | 개인정보 동의 시각 (C3) |
 | source | varchar(20) | NOT NULL, default `form` | `form`(외부 지원) / `manual`(담당자 등록, D6) |
-| portal_token | varchar(64) | UNIQUE | 지원 현황 조회 링크(신-1). **접수 시점에 만들지 않는다** — 지원자가 이메일로 요청할 때 발급한다. 아무도 안 볼 링크를 전건에 미리 만들면 유효한 토큰이 지원자 수만큼 상시 존재하게 된다 (2026-09-07, 리비전 `0010`) |
-| portal_token_expires_at | timestamptz | | 위 토큰 기한. 기본 7일. 지난 링크는 410 |
+| portal_token | varchar(64) | UNIQUE | **2026-09-16 미사용** — 메일 링크 포털을 철거해 이 토큰을 읽는 경로가 없다. 컬럼은 남기되 새로 채우지 않는다(데이터를 없애는 이행은 되돌리기 어렵다). ~~지원 현황 조회 링크(신-1). 접수 시점에 만들지 않고 지원자가 이메일로 요청할 때 발급 (2026-09-07, 리비전 `0010`)~~ |
+| portal_token_expires_at | timestamptz | | 위 토큰 기한(미사용, 위 참조). 기본 7일 |
 | created_at / updated_at | timestamptz | NOT NULL | |
 
 - UNIQUE `(job_posting_id, email)` — 중복 지원 방지(C6, 권장이지만 제약 하나로 끝나므로 처음부터 포함)
@@ -217,6 +221,18 @@ UNIQUE(job_posting_id, user_id).
 
 비고: 화면 표시는 규격 파일명(`{지원자명}_{유형}.{확장자}`)을 코드에서 생성해 쓰고, `filename`(원본)은 보존해 보조 표기한다. 허용 형식 pdf·docx·hwp(hwpx). 자소서가 이력서에 포함된 경우 `resume` 1건만 존재할 수 있다.
 
+## file_blobs — 파일 본문 DB 보관 (v2.7 · alembic `0026`, 온프레미스)
+
+`files` 1행에 최대 1행. 있으면 다운로드가 S3 presign 대신 **백엔드 스트리밍**(60초·1회용 티켓)으로 간다 — 온프레미스 MinIO 주소가 브라우저에서 안 풀려서다(#282). **AWS 운영에서는 비어 있고** 기존 S3 경로 그대로다.
+
+| 컬럼 | 타입 | 제약 | 설명 |
+|---|---|---|---|
+| file_id | bigint | PK, FK → files.id **ON DELETE CASCADE** | 파일이 지워지면 본문도 같이 |
+| content | bytea | NOT NULL | 파일 본문 |
+| size_bytes | bigint | NOT NULL | 검증용 (`files.size_bytes` 와 같아야 한다) |
+| sha256 | char(64) | NOT NULL | 이관 멱등성 |
+| created_at | timestamptz | NOT NULL, default now() | |
+
 ## document_anchors — 제출물 무결성 앵커 (v1.8)
 
 | 컬럼 | 타입 | 제약 | 설명 |
@@ -274,7 +290,7 @@ UNIQUE(job_posting_id, user_id).
 | id | bigint | PK | |
 | application_id | bigint | FK → applications.id, NOT NULL | |
 | to_email | varchar(255) | NOT NULL | |
-| stage | varchar(20) | NOT NULL | 어떤 단계 변경 건인지. 단계 5종 + **`custom`**(수동·에이전트 발송 — 단계 이동이 아니라서 표현할 값이 없다). `applications.current_stage` 의 허용값은 그대로 5종이다 |
+| stage | varchar(20) | NOT NULL | 어떤 단계 변경 건인지. 단계 5종 + **`custom`**(수동·에이전트 발송 — 단계 이동이 아니라서 표현할 값이 없다) + **`password_setup`**(2026-09-16 · 비밀번호 설정 링크. 기능성 메일이라 어느 단계에도 안 붙고, 사람이 쓴 `custom` 과도 구별한다) + **`resume_missing`**(2026-09-17 · 통합 API 이력서 URL 을 못 받았다는 안내. 같은 부류). `applications.current_stage` 의 허용값은 그대로 5종이다 |
 | status | varchar(20) | NOT NULL, default `queued` | `queued` / `sent` / `failed` |
 | subject | text | | 확정 제목. **NULL 이면 발송 시점 렌더**(단계 자동 발송) |
 | body | text | | 확정 본문. 값이 있으면 워커가 렌더를 건너뛰고 그대로 보낸다 = **보낸 그대로의 기록**. 면접 안내는 발송 시점에야 라이브 일정 링크를 알 수 있어 미리 굳히지 않는다 |
@@ -476,3 +492,34 @@ UNIQUE(job_posting_id, user_id).
 | created_at | timestamptz | NOT NULL | |
 
 - 문항은 DB 가 아니라 **코드 상수**다 (`backend/app/aptitude_questions.py`, 10문항·5카테고리). 문항 편집 UI 는 만들지 않는다 (ADR-0027 결정 2)
+
+## applicant_credentials — 지원자 로그인 비밀번호 (v2.4)
+
+지원자가 `/my` 에 들어올 때 쓰는 비밀번호. **없으면 아직 안 정한 것**이고 그때는 생년월일로 들어온다([ADR-0033](../03_decision/0033-지원자-앱-로그인.md) 2026-09-16 개정).
+
+| 컬럼 | 타입 | 제약 | 설명 |
+|---|---|---|---|
+| email | varchar(255) | PK | 소문자 정규화. **사람 단위 키** |
+| password_hash | varchar(255) | NOT NULL | bcrypt. `users.password_hash` 와 같은 방식 |
+| created_at | timestamptz | NOT NULL | |
+| updated_at | timestamptz | NOT NULL | |
+
+- **`applications` 에 얹지 않았다.** 비밀번호는 사람(이메일) 단위인데 지원은 여러 건이다 — 지원서마다 두면 같은 사람이 공고 둘에 냈을 때 비밀번호가 두 벌 생기고, 한쪽에서 바꾸면 다른 쪽이 옛 것이 된다
+- **이 행이 생기면 그 계정은 생년월일로 못 들어온다.** 둘 다 열어 두면 약한 쪽으로 들어온다 — 생년월일은 SNS·이력서로 알 수 있는 값이라 비밀번호를 정한 의미가 없어진다
+
+## applicant_password_tokens — 비밀번호 설정·재설정 링크 (v2.4)
+
+접수 메일·재발급 요청으로 나가는 일회용 링크. **처음 정할 때와 잊었을 때가 같은 경로다.**
+
+| 컬럼 | 타입 | 제약 | 설명 |
+|---|---|---|---|
+| id | bigint | PK | |
+| email | varchar(255) | NOT NULL, INDEX | 소문자 정규화 |
+| token_hash | varchar(255) | NOT NULL | **bcrypt 해시만 저장.** 원본은 메일 본문에만 있다 |
+| expires_at | timestamptz | NOT NULL | 기본 7일 (`APPLICANT_PASSWORD_TOKEN_DAYS`) |
+| used_at | timestamptz | NULL 허용 | 한 번 쓰면 죽는다. 재발급하면 그 이메일의 살아 있는 토큰이 전부 여기 찍힌다 |
+| created_at | timestamptz | NOT NULL | |
+
+- **조회 링크(일정·인적성·면접)와 저장 방식이 다르다.** 그쪽은 평문이다 — 새어 봐야 "내 지원 현황이 보인다" 지만, **이 링크가 새면 계정이 통째로 넘어간다.** 그래서 회사 API 키(`integration_clients.api_key_hash`)와 같은 무게로 다룬다
+- 해시는 O(1) 조회가 안 된다. 링크를 열 때는 살아 있는 토큰만 훑어 대조한다 — 만료·사용된 것은 대조 대상에서 빠져 순회가 짧게 유지된다
+- **행을 지우지 않는다.** "이미 쓴 링크" 와 "없는 링크" 를 서버 로그에서 가를 수 있어야 한다. 지원자에게는 둘 다 같은 문구(410 「만료됐거나 이미 사용한 링크입니다」)로 답한다

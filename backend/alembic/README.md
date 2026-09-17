@@ -65,7 +65,11 @@ uv run alembic current             # 지금 리비전
 2. 리비전을 만든다 — `uv run alembic revision --autogenerate -m "무엇을"`
 3. **생성된 파일을 읽는다.** autogenerate 는 완벽하지 않다 — 실제로 `use_alter` 순환 FK 를 빠뜨렸고 `alembic check` 로 잡았다
 4. `alembic upgrade head` 로 적용하고 `alembic check` 로 어긋남이 없는지 확인
-5. 코드와 **같은 커밋**에 넣고 `01-erd.md` 도 함께 갱신한다 (CLAUDE.md 규칙)
+5. **빈 DB 에 이행만 올린 뒤 `uv run python scripts/check_schema_drift.py`** — 모델과 이행 결과의 표·컬럼·CHECK 허용 값·UNIQUE 를 비교한다. `alembic check` 는 CHECK 제약의 값 목록을 안 보는데, 09-16 사고(`password_setup` 누락)가 바로 거기서 났다
+6. 번호는 `versions/` 의 **마지막 번호 + 1**. 겹치면 `tests/test_alembic_revisions.py` 가 CI 에서 실패한다(09-17 #283)
+7. 코드와 **같은 커밋**에 넣고 `01-erd.md` 도 함께 갱신한다 (CLAUDE.md 규칙)
+
+> **테스트가 초록이어도 이행이 맞다는 뜻은 아니다.** `tests/conftest.py` 의 `create_all` 이 이행에 빠진 표를 채워 넣기 때문이다. 5번이 그 틈을 막는다.
 
 ## 리비전
 

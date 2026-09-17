@@ -199,3 +199,75 @@
     gap: var(--sp-5);
   }
 }
+
+/* ── 지원자 갈래 — 비밀번호 로그인 · 설정 링크 (2026-09-16) ──
+ *
+ * **늘 보인다.** 비밀번호를 정한 계정이 생년월일로 들어오면 401 인데, 서버가
+ * 사유를 안 나누므로 화면이 「비밀번호를 정하셨네요」라고 말해 줄 수 없다
+ * (말하면 계정 상태가 새어 나간다). 길이 늘 열려 있어야 스스로 찾는다. */
+.alt {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+}
+
+.altLink {
+  padding: 0;
+  background: none;
+  border: none;
+  font-family: inherit;
+  font-size: var(--font-caption);
+  color: var(--accent-text);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.altLink:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.altDot {
+  font-size: var(--font-caption);
+  color: var(--text-sub);
+}
+
+/* 설정 링크 패널. 페이지를 따로 파지 않고 여기 접었다 편다 */
+.setup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  padding: var(--sp-3);
+  background: var(--bg-sunken);
+  border-radius: var(--r-ctl);
+}
+
+.setupBody {
+  margin: 0;
+  font-size: var(--font-caption);
+  line-height: 1.6;
+  color: var(--text-sub);
+  word-break: keep-all;
+}
+
+/* **채운 흰 판이 아니다** — 이 화면의 주 동작은 「로그인」 하나다
+   (05-design §1: 화면마다 채운 흰 버튼은 하나) */
+.setupSend {
+  min-height: 44px;
+  padding: 0 var(--sp-4);
+  background: transparent;
+  border: var(--border-w) solid var(--border);
+  border-radius: var(--r-ctl);
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--font-sm);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.setupSend:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

@@ -131,7 +131,7 @@ def _try_change_stage(m: str) -> DirectAction | None:
     match = re.match(
         rf"^(.+?)\s*(?:을|를|이|가)?\s*"
         rf"({_STAGE_PATTERN})\s*(?:단계로|으로|로)\s*"
-        r"(?:옮겨|바꿔|변경\s*해?|보내)\s*(?:줘|주세요)?\s*[.!?]?$",
+        r"(?:옮겨|바꿔|변경\s*해?|보내|되돌려)\s*(?:줘|주세요)?\s*[.!?]?$",
         m,
     )
     if not match:

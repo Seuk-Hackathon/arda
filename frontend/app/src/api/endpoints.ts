@@ -279,7 +279,11 @@ import type { ApplicantLoginOut, ApplicantMe } from './types'
 
 export const applicantAuth = {
   /* 실패는 전부 401 한 가지다 — 없는 이메일·틀린 생년월일을 서버가 구별해 주지
-     않는다. 화면에서도 사유를 지어내면 안 된다. 5회 틀리면 429(15분). */
+     않는다. 화면에서도 사유를 지어내면 안 된다. 5회 틀리면 429(15분).
+
+     **비밀번호를 정한 계정은 생년월일로 401 이다**(2026-09-16). 그것도 같은
+     401 이라 화면이 "비밀번호를 정하셨네요"라고 말해 주면 안 된다 — 서버가
+     감춘 것을 화면이 드러내는 꼴이다. */
   login: (email: string, birth_date: string) =>
     api.post<ApplicantLoginOut>(
       '/public/applicant/login',
@@ -287,6 +291,63 @@ export const applicantAuth = {
       { auth: false },
     ),
 
+  /** 비밀번호 갈래. 같은 경로에 본문만 다르다 */
+  loginWithPassword: (email: string, password: string) =>
+    api.post<ApplicantLoginOut>(
+      '/public/applicant/login',
+      { email, password },
+      { auth: false },
+    ),
+
+  /* 비밀번호 설정 링크를 메일로 보낸다.
+
+     **지원 이력이 없어도 202 다.** 있고 없고를 알려 주면 "이 사람이 여기
+     지원했나"를 떠보는 도구가 된다(ADR-0033 원칙). 그래서 화면도 결과에 따라
+     문구를 가르지 않는다 — 언제나 "메일을 보냈어요" 하나다. */
+  requestPasswordSetup: (email: string) =>
+    api.post<void>(
+      '/public/applicant/password-setup-request',
+      { email },
+      { auth: false },
+    ),
+
+  /* 링크가 살아 있는지 보고 누구 것인지 받는다. 만료·사용됨은 410 이다 —
+     **둘을 나누지 않는다**(같은 410, 같은 문구). */
+  passwordToken: (token: string, signal?: AbortSignal) =>
+    api.get<{ email: string }>(
+      `/public/applicant/set-password/${encodeURIComponent(token)}`,
+      { auth: false, signal },
+    ),
+
+  /* 비밀번호를 정한다. 성공하면 그 이메일의 남은 토큰은 전부 죽는다.
+     길이 위반은 422, 죽은 링크는 410. */
+  setPassword: (token: string, password: string) =>
+    api.post<void>(
+      `/public/applicant/set-password/${encodeURIComponent(token)}`,
+      { password },
+      { auth: false },
+    ),
+
   me: (signal?: AbortSignal) =>
     api.get<ApplicantMe>('/applicant/me', { applicant: true, signal }),
+}
+
+/* ── 비밀번호 규칙 (2026-09-16 백엔드 계약) ──────────────────────
+ *
+ * **글자 수가 아니라 바이트다.** 저장소가 쓰는 bcrypt 는 72바이트를 넘는
+ * 입력을 말없이 자른다 — 그 뒤는 무엇을 치든 같은 비밀번호가 된다. 한글은
+ * 글자당 3바이트라 24자쯤이 한계다. 서버가 422 로 막지만, 제출하고 나서
+ * 알게 되면 늦으므로 화면이 먼저 막는다. */
+export const PASSWORD_MIN = 8
+export const PASSWORD_MAX = 64
+export const PASSWORD_MAX_BYTES = 72
+
+/** 비밀번호가 규칙에 맞는가. 맞으면 null, 아니면 사유 한 줄 */
+export function passwordProblem(password: string): string | null {
+  if (password.length < PASSWORD_MIN) return `${PASSWORD_MIN}자 이상이어야 합니다`
+  if (password.length > PASSWORD_MAX) return `${PASSWORD_MAX}자 이하여야 합니다`
+  if (new TextEncoder().encode(password).length > PASSWORD_MAX_BYTES) {
+    return `너무 깁니다 — 한글은 24자까지입니다`
+  }
+  return null
 }

@@ -538,6 +538,18 @@ class InterviewSession:
         self.identity: dict | None = None
         # 얼굴 추출 하나가 스레드에서 도는 동안 또 시작하지 않게 (app.py `_on_binary`)
         self.face_busy = False
+        # 이 면접 하나의 프레임 장부 (2026-09-16, 앱 오너 요청).
+        #
+        # `FRAME_STATS` 는 프로세스 전역이라 면접이 겹치거나 컨테이너가 다시 뜨면
+        # 어느 면접의 숫자인지 알 수 없다. 앱 화면의 「얼굴 N · 실패 M」 과 맞춰
+        # **「앱이 안 보내는 것」과 「서버가 못 찾는 것」을 한 면접 안에서 가르려면**
+        # 세션마다 세야 한다. 끝날 때 로그 한 줄로 남긴다 (app.py).
+        self.frame_stats = {"recv": 0, "dropped_busy": 0, "in": 0, "face": 0}
+        # 이 면접이 끝났는가. **소켓이 닫히는 것과 별개다** — 지원자 쪽이 소켓을
+        # 안 닫아도(앱이 마이크를 놓지 않거나 웹 탭을 열어 두면) 여기서부터는 더
+        # 듣지 않는다 (2026-09-16, app.py `_close`·`_finished_elsewhere`).
+        self.done = False
+        self.last_done_check = 0.0
         # 이 면접의 프레임이 몇 도 누워 있는가. **처음 얼굴을 찾을 때 정해진다**
         # (`face_row_search`). None 이면 아직 안 정해진 것이고, 그동안만 네 방향을
         # 뒤진다. 각도가 굳혀진 뒤 5초 이상 얼굴을 못 찾으면 None 으로 되돌려
@@ -597,6 +609,7 @@ class InterviewSession:
         global LAST_ROTATION
 
         FRAME_STATS["in"] += 1
+        self.frame_stats["in"] += 1
         self._frame_count += 1
         if self._frame_count % FRAME_STRIDE:
             return None
@@ -607,6 +620,7 @@ class InterviewSession:
             self.frame_rotation = None
         row, rot, rotated_bgr = face_row_search_full(jpeg, self.frame_rotation)
         if row is not None:
+            self.frame_stats["face"] += 1
             self._last_face_time = now
             if self.frame_rotation is None:
                 # 이 면접에서 처음 얼굴을 찾았다(또는 재탐색 후). 각도를 굳히고 밖에도 남긴다.
@@ -984,6 +998,65 @@ async def mark_answered(client, token: str, seq: int) -> None:
         timeout=10,
     )
     r.raise_for_status()
+
+
+def is_placeholder(text: str | None) -> bool:
+    """전사 자리표시자(`[전사 지연 · …]` · `[전사 불가 …]` · `[전사 꺼짐 …]`)인가.
+
+    **백엔드 `session_service.is_placeholder` 와 같은 규칙이다.** 여기서 "받아쓰지
+    못했다"고 판단한 답변만 음성을 남기고, 담당자 화면의 「다시 받아쓰기」가 고르는
+    대상도 같은 규칙이어야 한다 — 두 규칙이 갈리면 올려 둔 음성이 영영 안 쓰인다.
+    """
+    return bool(text) and text.lstrip().startswith("[전사")
+
+
+async def preserve_audio(client, token: str, seq: int | None, pcm: bytes) -> str | None:
+    """**전사에 실패한 답변에 한해** 음성을 S3 에 올리고 그 회차에 붙인다 (2026-09-16).
+
+    실시간 면접은 음성을 저장하지 않는다 — 저장할 의무가 없고 쌓으면 지켜야 할
+    민감정보가 는다. 그 원칙은 그대로 두되, **받아쓰지 못한 답변만** 예외로 남긴다:
+    그 경우 지원자가 한 말은 자리표시자 한 줄 말고 아무 데도 없다(2026-09-15 세션
+    75). 담당자가 나중에 「다시 받아쓰기」를 누르면 이 음성으로 글을 채운다.
+
+    **실패해도 면접은 그대로 간다.** 음성을 못 남기면 지금까지와 같은 상태(자리
+    표시자만 남음)일 뿐이라, 여기서 예외를 올려 답변 저장을 막으면 안 된다 —
+    부르는 쪽이 감싼다.
+    """
+    if seq is None or not SERVICE_TOKEN:
+        # 번호를 모르면 어느 회차에 붙일지 정할 수 없고, 서비스 토큰이 없으면
+        # 붙이는 경로 자체가 막혀 있다. 올리기만 하면 주인 없는 파일이 된다.
+        return None
+
+    wav = _pcm_to_wav(pcm)
+    r = await client.post(
+        f"{BACKEND_URL}/api/v1/public/interview/{token}/audio-upload-url",
+        json={
+            "filename": "answer.wav",
+            "content_type": "audio/wav",
+            "size_bytes": len(wav),
+        },
+        timeout=15,
+    )
+    r.raise_for_status()
+    issued = r.json()
+
+    # 브라우저가 이력서를 올리는 것과 같은 경로다 — 서버를 안 거치고 S3 로 직행한다.
+    put = await client.put(
+        issued["upload_url"],
+        content=wav,
+        headers={"Content-Type": "audio/wav"},
+        timeout=60,
+    )
+    put.raise_for_status()
+
+    r2 = await client.post(
+        f"{BACKEND_URL}/api/v1/internal/interview/{token}/turns/{seq}/audio",
+        headers={"X-Service-Token": SERVICE_TOKEN},
+        json={"audio_s3_key": issued["s3_key"]},
+        timeout=15,
+    )
+    r2.raise_for_status()
+    return issued["s3_key"]
 
 
 async def submit_answer(client, token: str, transcript: str, seq: int | None = None) -> dict:

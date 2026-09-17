@@ -189,7 +189,7 @@ def _vit_labels() -> dict[int, str]:
 # 띄우면 담당자가 못 읽는다. 이 표는 화면 표시용이지 학습 결과가 아니다.
 _EXPRESSION_KO = {
     "angry": "화남",
-    "disgust": "역겨움",
+    "disgust": "긴장",
     "fear": "무서움",
     "happy": "웃음",
     "sad": "슬픔",

@@ -90,6 +90,17 @@ def regenerate_summary(
             "요약 생성에 실패했습니다. LLM 응답을 처리하지 못했습니다 — 잠시 후 다시 시도해 주세요.",
         )
 
+    # 한 번도 판정받지 못한 지원자만 자동 심사로 넘긴다 (2026-09-17, 백엔드).
+    # 이미 판정됐거나 사람이 옮긴 지원자는 건드리지 않는다 — 조건은 함수 설명 참고.
+    # 판정이 실패해도 요약은 이미 저장됐으므로 응답은 그대로 준다.
+    try:
+        from app.application import screening
+
+        screening.decide_if_never_decided(db, app)
+    except Exception:
+        db.rollback()
+        logger.exception("재생성 뒤 자동 심사 실패: application_id=%s", application_id)
+
     return SummaryOut(summary=summary, model=app.ai_summary_model)
 
 

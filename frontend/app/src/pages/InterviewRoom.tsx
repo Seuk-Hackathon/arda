@@ -252,11 +252,26 @@ export default function InterviewRoom() {
 
   /* 훅이 돌려주는 것을 통째로 들고 다니지 않고 바로 푼다 — 상태와 ref 가
      한 덩어리로 있으면 React 컴파일러가 상태를 읽는 것까지 ref 접근으로 본다. */
-  const { phase, error, muted, toggleMute, leave, localRef, remoteRef, remoteStream } =
-    useInterviewRoom({ role: 'recruiter', sessionId: valid ? id : null })
+  const {
+    phase,
+    error,
+    muted,
+    toggleMute,
+    leave,
+    localRef,
+    remoteRef,
+    remoteStream,
+    token,
+    verdict,
+  } = useInterviewRoom({ role: 'recruiter', sessionId: valid ? id : null })
   /* **지원자에게서 받은 영상을 분석에 넘긴다.** 지원자 기기가 아니라 여기서
-     보내는 이유는 `useLiveAnalysis` 머리말에 적어 뒀다 (ADR-0029). */
-  const analysis = useLiveAnalysis(remoteStream)
+     보내는 이유는 `useLiveAnalysis` 머리말에 적어 뒀다 (ADR-0029).
+
+     2026-09-16: 얼굴을 **그 면접의 세션 소켓**으로 보낸다(백엔드 PR #273).
+     앱이 소리를, 여기가 얼굴을 같은 토큰으로 보내야 서버가 둘을 한 판정으로
+     묶는다. 그 대신 **판정은 이 소켓으로 안 돌아온다** — 방으로 오므로
+     `verdict` 를 같이 넘겨 준다. 안 넘기면 판정 패널이 조용히 죽는다. */
+  const analysis = useLiveAnalysis(remoteStream, token, verdict)
   /* 영상 위 홀로그램 판과, 그 뒤 영상의 밝기 (2026-09-11) */
   const holoRef = useRef<HTMLDivElement>(null)
   const backdrop = useBackdropTone(remoteRef, holoRef, phase === 'live')

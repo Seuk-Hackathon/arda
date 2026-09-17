@@ -55,10 +55,17 @@ registerProcessor('pcm', PCM);`
 
 /** `/ai/*` 는 Caddy 가 거짓말 탐지 서비스로 넘긴다. `wsUrl` 이 붙이는
     `/api/v1` 접두어를 쓰면 안 되므로 여기서 직접 만든다. */
-export function aiWsUrl(path: string): string {
+export function aiWsUrl(path: string, query?: Record<string, string>): string {
   const u = new URL(wsUrl('/'))
   u.pathname = path
   u.search = ''
+  /* **쿼리를 경로에 이어 붙이면 안 된다** (2026-09-16). `pathname` 에 넣은
+     `?` 는 `%3F` 로 이스케이프돼 경로의 일부가 되고, 바로 아래 `search = ''`
+     가 어차피 지운다. `?role=recruiter` 를 그렇게 붙였다가 토큰이
+     `tok%3Frole=recruiter` 가 되는 것을 잡았다. */
+  if (query) {
+    for (const [k, v] of Object.entries(query)) u.searchParams.set(k, v)
+  }
   return u.toString()
 }
 

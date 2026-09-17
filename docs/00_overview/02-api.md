@@ -121,8 +121,9 @@
 | POST | /public/interview/{token}/start | 면접 시작 | **공개**. 동의 없으면 422 · 만료면 410 · 준비된 질문이 없으면 422 |
 | PUT | /interview-sessions/{id}/questions | 질문 목록 설정 | 본문 `{questions: [...]}` (1~20개). **시작 전에만** — 진행 중 변경은 409 |
 | POST | /public/interview/{token}/audio-upload-url | 답변 녹화 업로드 URL 발급 | **공개**. 본문 `{filename, content_type, size_bytes}`. **진행 중인 면접만** — 아니면 409·만료 410. 허용 `webm`·`m4a`·`mp3`·`wav`·`mp4`, **50MB 이하**(카메라를 켜면 같은 길이가 훨씬 커진다 — 이력서 상한 10MB 와 따로 둔다). 키는 서버가 만든다(`interviews/<uuid>/answer.<ext>`) |
+| POST | /interview-sessions/{id}/retranscribe | **답이 빈 회차를 음성으로 다시 받아쓴다** | 담당자용. 2026-09-16 신설. 대상은 `answered_at` 이 있으면서 전사가 비었거나 `[전사 …]` 자리표시자인 회차. **멀쩡한 답변은 건드리지 않아 몇 번 눌러도 안전하다.** 응답 `{candidates, filled[], failed[], no_audio[]}` — 전부 회차 번호(`seq`). **음성이 S3 에 남은 것만 되살릴 수 있다**: 실시간 소켓 경로는 음성을 흘려보내므로 `no_audio` 로 나온다. 하나라도 채워지면 AI 채점과 서류 대조를 다시 돌린다 (ADR-0038 후속) |
 | POST | /interview-turns/{id}/analyze | 녹화 진위 분석 (ADR-0029) | 담당자용. **`LIE_SERVICE_URL` 이 없으면 503** — 설정을 안 넣으면 꺼져 있다. 녹화 없는 회차 409 · 서비스 실패 502. **결과를 저장하지 않는다** |
-| POST | /public/interview/{token}/answer | 현재 질문에 답변 | **공개**. 본문 `{transcript}` **또는** `{audio_s3_key}` — **둘 다 보내면 422**. 음성이면 서버가 읽어 전사하고 길이·비용까지 적는다. **`seq` 를 주면 그 칸**, 안 주면 **답 안 한 가장 앞 질문**에 붙는다(2026-09-09). 남은 질문이 없으면 409 — `seq` 를 짚었는데 이미 답이 들어간 칸이어도 409라 같은 답을 두 번 보내도 덮어쓰지 않는다. **끝난 면접(`done`)이어도 끝난 지 10분 안이면, `seq` 를 짚었고 이미 답한 칸(`answered_at` 있음)의 전사는 받는다** — 워커 받아쓰기가 [면접 종료]보다 늦게 도착한 경우다(2026-09-11). 받으면 꼬리질문은 만들지 않고 AI 점수를 다시 매긴다. 응답에 **`pacing`** 이 붙을 수 있다(아래) |
+| POST | /public/interview/{token}/answer | 현재 질문에 답변 | **공개**. 본문 `{transcript}` **또는** `{audio_s3_key}` — **둘 다 보내면 422**. 음성이면 서버가 읽어 전사하고 길이·비용까지 적는다. **전사가 실패해도(502) 음성 키는 회차에 남는다**(2026-09-16) — 나중에 `retranscribe` 가 그 음성을 다시 집는다. 전사·`answered_at` 은 그대로 비어 있어 지원자는 같은 질문에 다시 답할 수 있다. **`seq` 를 주면 그 칸**, 안 주면 **답 안 한 가장 앞 질문**에 붙는다(2026-09-09). 남은 질문이 없으면 409 — `seq` 를 짚었는데 이미 답이 들어간 칸이어도 409라 같은 답을 두 번 보내도 덮어쓰지 않는다. **끝난 면접(`done`)이어도 끝난 지 10분 안이면, `seq` 를 짚었고 이미 답한 칸(`answered_at` 있음)의 전사는 받는다** — 워커 받아쓰기가 [면접 종료]보다 늦게 도착한 경우다(2026-09-11). 받으면 꼬리질문은 만들지 않고 AI 점수를 다시 매긴다. 응답에 **`pacing`** 이 붙을 수 있다(아래) |
 | POST | /public/interview/{token}/finish | 면접 종료 → **대조 생성** + **AI 채점** | **공개**. **다 답하지 않아도 끝낼 수 있다.** 두 번 눌러도 200. 대조(`findings`)는 **뒤에서** 만든다(아래). **ADR-0034**: 같은 백그라운드에서 아르가 `interview_sessions.ai_score` 를 채운다(상세 `GET /interview-sessions/{id}` 의 `ai_score`·`ai_score_detail`·`scored_at`) |
 | POST | /interview-sessions/{id}/rtc-ticket | 실시간 면접 입장권 (채용자) | 로그인 필요. **60초·1회용.** 응답 `{ticket, token, expires_in, ice_servers}` — 접속 직전에 받는다 |
 | WS | /ws/interview/{token}/rtc | 실시간 면접 시그널링 | 지원자는 토큰만, **채용자는 `?ticket=` 까지** 있어야 한다. 프로토콜은 [실시간-면접-시그널링](../02_tasks/실시간-면접-시그널링.md) |
@@ -142,24 +143,29 @@
   - **프론트는 모르는 `action` 을 무시하도록** 짠다. 신호가 늘면 여기가 늘어난다
 - 아직 없는 것: 질문 자동 생성(설계 §5-5) · 대조 판정(§5-6) · 평가 초안(§5-7). **셋 다 에이전트 폴더**다
 
-## 지원 현황 조회 — 지원자용 (신-1 지원자 포털)
+## 지원 현황 조회 — 지원자용
 
-지원자가 이메일을 넣으면 **그 주소로 조회 링크를 보낸다.** 링크를 열면 자기 지원이 어디까지 왔는지 본다. 로그인도 비밀번호도 없다 — 나머지 공개 경로(면접·일정·인적성)와 같은 토큰 방식이다.
+지원자가 **이메일 + 비밀번호**로 들어와 자기 지원이 어디까지 왔는지 본다. 비밀번호는 접수 메일로 받은 설정 링크에서 한 번 정한다([ADR-0033](../03_decision/0033-지원자-앱-로그인.md) 2026-09-16 개정).
+
+> **메일 링크 포털은 2026-09-16 에 철거했다** (`POST /public/applications/lookup` · `GET /public/applications/status/{token}`). 이메일을 넣으면 조회 링크를 보내 주던 경로인데, **프론트에 그 링크를 여는 화면이 없어 이미 깨져 있었고**(앱 오너 보고 2026-09-15) 웹·앱 어느 쪽도 부르지 않았다. 비밀번호 설정 링크가 그 자리를 대신한다 — 「생년월일을 안 낸 사람의 길」이라는 존재 이유도 같이 사라졌다. `applications.portal_token`·`portal_token_expires_at` 컬럼은 **지우지 않고 미사용으로 남긴다**(데이터를 없애는 이행은 되돌리기 어렵다).
 
 | 메서드 | 경로 | 설명 | 비고 |
 |---|---|---|---|
-| POST | /public/applications/lookup | 조회 링크를 메일로 발송 | **공개**. 본문 `{email}`. 항상 **202** 와 **같은 본문** |
-| GET | /public/applications/status/{token} | 지원 현황 | **공개**. 없는 토큰 404 · 기한 지남 **410** |
-| POST | /public/applicant/login | 지원자 앱 로그인 | **공개**. 본문 `{email, birth_date}` (8자리 `YYYYMMDD`). 실패는 전부 **401** — 형식 오류도 401 이다. 5회 실패 시 **429**(15분) |
+| POST | /public/applicant/login | 지원자 앱 로그인 | **공개**. 본문 `{email, password}` **또는** `{email, birth_date}` (8자리 `YYYYMMDD`). **비밀번호를 정한 계정은 생년월일로 못 들어온다**(2026-09-16) — 둘 다 열어 두면 약한 쪽으로 들어온다. 실패는 전부 **401** — 형식 오류도, "비밀번호를 아직 안 정했다" 도 같은 401 이다. 5회 실패 시 **429**(15분) |
+| POST | /public/applicant/password-setup-request | **비밀번호 설정 링크 받기** | **공개**. 본문 `{email}`. 2026-09-16 신설. 처음 정할 때와 잊었을 때가 **같은 경로**다. **지원 이력이 없어도 202** — 있고 없고를 다르게 답하면 지원 사실을 떠보는 도구가 된다. 발급하면 그 이메일의 **이전 링크는 그 자리에서 죽는다** |
+| GET | /public/applicant/set-password/{token} | 링크가 살아 있는지 + 어느 계정인지 → `{email}` | **공개**. 만료·이미 사용됨 둘 다 **410**, 문구도 같다 — 다르게 답하면 토큰 유효성을 떠볼 수 있다 |
+| POST | /public/applicant/set-password/{token} | 비밀번호를 정한다 | **공개**. 본문 `{password}` — **8~64자, UTF-8 72바이트 이하**(bcrypt 가 72바이트를 말없이 자른다. 한글은 24자까지). 넘으면 422. **링크는 한 번만** 쓴다. 정하고 나면 그 계정은 생년월일 로그인이 닫힌다 |
 | GET | /applicant/me | 내 지원 현황 | **지원자 토큰 전용.** 조회 인자를 받지 않는다 — 토큰의 이메일로만 찾는다. 지원마다 `interviews[]` · `aptitudes[]` · `schedules[]` 가 붙는다(각 `token`·`status`·`expires_at`) |
 
 - **없는 주소도 똑같이 답한다.** 다르게 답하면 그것만으로 "이 사람이 여기 지원했는가"를 확인하는 도구가 된다 — 이직 준비 중인 사람에게는 지원 사실 자체가 알려지면 안 되는 정보다. 건수도 안 돌려준다
 - ~~**접수번호 + 생년월일 방식을 쓰지 않았다.**~~ → **2026-09-08 개정** ([ADR-0033](../03_decision/0033-지원자-앱-로그인.md)). 앱 로그인에 **이메일 + 생년월일 8자리**를 쓴다. 위 판단(경우의 수가 만 단위라 자동으로 뚫린다)은 **지금도 기술적으로 맞고**, 그래서 안전해졌다고 적지 않는다 — 채택 이유는 시연 편의다. 막는 것은 해시가 아니라 **시도 횟수 제한**(5회/15분)이다. 메일 링크 포털은 **그대로 남는다** — 생년월일을 안 낸 사람과 앱을 안 쓰는 사람의 길이다
+- **2026-09-16 재개정** ([ADR-0033](../03_decision/0033-지원자-앱-로그인.md)). **비밀번호를 쓴다.** 생년월일은 경우의 수가 만 단위인 데다 **새어도 바꿀 수 없는 값**이고, 지원 폼에서 선택이라 그 칸을 비운 사람은 영영 못 들어왔다. 설정 링크를 메일로 받아 한 번 정하면 그 뒤로는 이메일 + 비밀번호다. **아직 안 정한 계정은 생년월일로 계속 들어온다** — 기존 지원자를 막지 않는다. 위 「포털은 그대로 남는다」는 **철회한다** — 설정 링크가 그 자리를 대신하고, 포털은 2026-09-16 에 철거했다(이 절 머리말)
 - **다시 요청하면 지난 링크는 죽는다.** 토큰이 UNIQUE 라 재발급이 덮어쓴다
 - 한 사람이 공고 여러 개에 냈으면 **지원 건마다 한 통씩** 나간다. 메일이 지원 건에 매여 있어서(`email_logs.application_id`) 한 통에 몰면 나머지 지원의 기록에 아무것도 안 남는다
 - **`rejected` 를 "불합격"이라고 쓰지 않는다.** 담당자가 통보하기 전에 화면이 먼저 말하면 안 된다 — `전형 종료` 로 내리고 **사유는 어디에도 싣지 않는다**
 - **지원자가 들어갈 토큰 3종을 `/applicant/me` 가 같이 내린다** — `interviews[]`·`aptitudes[]`·`schedules[]` (2026-09-08). 본인 토큰으로 조회한 자기 것이라 새로 여는 비밀이 아니고, 이게 없으면 **로그인해 놓고도 메일함을 뒤져야 한다.** 앱에는 메일함이 없어서 [ADR-0033](../03_decision/0033-지원자-앱-로그인.md) 이 없애려던 문제가 그 탭들에 그대로 남는다
   - ~~**아직 할 일이 남은 것만 싣는다**~~ → **2026-09-09 개정. 끝난 것도 싣는다** — 면접 `pending`·`in_progress`·**`done`** · 인적성 `pending`·**`done`** · 일정 `proposed`·`confirmed`. **만료(`expired`)만 뺀다**
+  - **2026-09-16 추가 — 「아직 `expired` 로 찍히지 않은 만료」도 뺀다.** 만료 판정은 토큰을 열 때만 도는데(스케줄러 없음), 아무도 안 열었으면 기한이 지나도 `status` 는 `pending` 이라 이 목록을 그대로 통과했다. 앱 홈이 「3일 남음」이라 적고 눌러 들어가면 「기한이 지났습니다」가 떴다(앱 실기기 실측). 이제 **`expires_at` 이 지난 줄은 상태와 무관하게 뺀다 — 단 끝난 것(면접·인적성 `done`, 일정 `confirmed`)은 기한과 무관하게 남긴다.** 그건 놓친 것이 아니라 다시 볼 자리다. **이 조회는 여전히 쓰기를 하지 않는다** — `status` 를 `expired` 로 찍는 것은 토큰을 실제로 열 때뿐이다
   - **왜 바꿨나**: 끝난 것을 빼면 면접을 마친 지원자의 화면에서 면접이 **통째로 사라진다.** "완료"와 "아직 안 잡힘"이 같은 화면이 되어, 방금 면접을 본 사람이 자기가 낸 것이 접수됐는지 알 수 없다(2026-09-09 앱 실측). `expired` 를 계속 빼는 이유는 다르다 — 그건 지원자가 놓친 것이라 화면에 띄워도 할 수 있는 일이 없다
   - **화면이 `status` 로 가른다.** 끝난 줄에는 들어가는 문을 그리지 않는다 — 앱(`applicant_summary_screen.dart`)·웹(`MyApplications.tsx`) 둘 다
   - 들어가는 곳: `/interview/{token}`(AI 면접) · `/interview-live/{token}`(실시간) · `/aptitude/{token}` · `/schedule/{token}`
@@ -232,7 +238,7 @@
 
 | 메서드 | 경로 | 기능 | 비고 |
 |---|---|---|---|
-| POST | /agent/applications/{id}/summarize | AI 요약 재생성 | M2. 기존 요약을 덮어쓴다 |
+| POST | /agent/applications/{id}/summarize | AI 요약 재생성 | M2. 기존 요약을 덮어쓴다. **2026-09-17**: 요약이 성공했고 그 지원자가 **한 번도 서류 판정을 받은 적 없으면**(`doc_decided_at` NULL) **공고가 열려 있을 때만** 자동 심사(ADR-0034)까지 이어서 돈다 — 첫 요약이 실패했던 지원자가 영영 판정을 못 받던 빈틈. 이미 판정됐거나 사람이 옮긴 지원자는 요약만 바뀐다. 응답 모양은 그대로 |
 | POST | /agent/chat | 에이전트 채팅 (검색·조회) | M3. 읽기 도구로 지원자 검색·조회, 쓰기 도구는 pending_action으로 반환. 응답에 사용량(`input_tokens`·`output_tokens`·`cache_write_tokens`·`cache_read_tokens`·`cost_usd`) 포함 ([ADR-0011](../03_decision/0011-에이전트-모델-비용.md)). **2026-09-01 변경**: `model` 이 모델명이 아니라 **`backend:model` 태그**다 (`anthropic:claude-haiku-4-5-20251001` · `ollama:qwen3:4b`) — 토크나이저가 달라 백엔드 간 토큰 수 비교가 불가능하므로 어느 엔진이 낸 값인지 함께 남긴다. **`backend` 필드가 추가**됐다(`anthropic` · `ollama`). 로컬 백엔드는 프롬프트 캐싱 개념이 없어 캐시 토큰이 **항상 0**이다 — `backend` 를 봐야 '캐시 미적중'과 '캐시 개념 없음'이 구분된다. 백엔드 선택은 `AGENT_CHAT_BACKEND`(기본 `anthropic`, [ADR-0024](../03_decision/0024-sLLM-로컬-모델-전략.md)) |
 | POST | /agent/confirm | 쓰기 도구 확인 실행 | M4, 로그인 필요. 사용자가 확인 카드를 승인한 뒤 호출. **메일 발송(`send_email`)도 이 경로를 탄다** — 되돌릴 수 없는 조작이라 승인 없이는 실행되지 않는다 (G4) |
 
@@ -279,6 +285,7 @@
 | POST | /internal/interview/{token}/verdict | 면접 실시간 판정을 담당자에게 민다 | 본문 `{truth_pct?, lie_pct?, window_sec?, …}`. **204 고정** |
 | GET | /internal/interview/{token}/questions | 면접 질문 전체 `[{seq, question}]` | 워커가 시작할 때 한 번. **전사를 안 기다리고 다음 질문을 보내기 위한 것** |
 | POST | /internal/interview/{token}/turns/{seq}/answered | 이 질문에 **답을 마쳤다**고 남긴다 → `{seq, answered_at}` | 워커가 말이 끝나는 순간 부른다(2026-09-11). 전사는 나중에 `/public/interview/{token}/answer` 에 같은 `seq` 로 채운다. 멱등 — 처음 시각을 지킨다. 진행 중이 아니면 409, 없는 번호면 404. **"지금 질문" 은 `answered_at` 이 빈 가장 앞 칸** |
+| POST | /internal/interview/{token}/turns/{seq}/audio | **전사에 실패한 답변의 음성 위치**를 남긴다 → `{seq, audio_s3_key}` | 2026-09-16 신설. 워커가 `[전사 …]` 자리표시자로 떨어질 때만 부른다 — 음성을 올린 뒤 그 키를 여기 붙인다. 담당자가 `POST /interview-sessions/{id}/retranscribe` 를 누르면 이 음성으로 다시 받아쓴다. **이미 받아쓴 회차면 409**(멀쩡한 답변을 다시 받아쓰게 되므로), 발급 경로가 만든 키 모양이 아니면 422, 없는 번호면 404. **전사는 여기서 하지 않는다** — 워커를 기다리게 하지 않는 자리다 |
 | GET | /internal/interview/{token}/portrait | 이력서에 든 증명사진 원본 바이트 | `image/jpeg`. 사진이 없으면 **404**(정상 — 워커가 확인을 건너뛴다) |
 | POST | /internal/interview/{token}/identity | 이력서 사진 대조 결과를 담당자에게 민다 | 본문 `{match: same\|different\|unclear, score}`. 면접당 **한 번**. 204 고정 |
 
@@ -367,6 +374,15 @@
 | PUT | /settings/scoring | 가중치·인재상 변경 | admin. `weights`(7개 전부, 각 0~100 — 묶음 합이 100 이 아니어도 됨, 합으로 나눈다) · `talent_profile`(text). 보낸 키만 반영 |
 
 점수 규칙(원본은 [N1 지시서](../02_tasks/N1-자동심사-파이프라인.md)): 서류 = 요건·우대·인재상 가중 평균 → `applications.doc_score` · 임계(`job_postings.pass_threshold`) 이상이면 아르가 `applied→screening→interview`, 미만이면 `→rejected`(이력 `changed_by` NULL + 점수 사유, 메일은 `send-rejections` 로 일괄) · 면접 = 답변 대조 + 진위 일관성 → `interview_sessions.ai_score` · 최종 = 서류×w + 면접×w → 상세의 `final_score`·`grade`. 사람이 단계를 옮기면 `decision_source=human` 이 되어 그 뒤 자동은 손대지 않는다. `accepted` 는 사람만.
+
+## 회사 통합 (ADR-0037)
+
+회사 백엔드가 서버 대 서버로 지원자를 밀어 넣는 경로. **사람 로그인(JWT)이 아니라 회사 API key 로 인증한다.** 2026-09-17 까지 이 절이 없었다(Phase A 누락).
+
+| 메서드 | 경로 | 설명 | 비고 |
+|---|---|---|---|
+| POST | /integrations/applications | 지원자 push | `Authorization: Bearer <회사 API key>`(bcrypt 대조). 본문 `{external_id, posting_token, applicant{name,email,phone,birth_date}, resume?{url|base64, filename?}, cover_letter?, source?}`. **같은 `external_id` 는 기존 지원서를 돌려준다**(`status: "duplicate"`) — 단 **그 지원서에 이력서가 아직 없으면 이번에 온 이력서로 다시 받는다**(URL 실패 뒤 회사가 재전송하는 경로). `resume` 은 `url`·`base64` **정확히 하나**. **base64** 는 응답 전에 저장(10MB·pdf/docx/hwp/hwpx 를 **바이트로** 판정, 넘으면 413·형식 밖이면 422 — 지원서도 안 남는다). **url** 은 응답 뒤 백그라운드로 받는다(2026-09-17 Phase B): http·https·80·443·**공인 주소만**(내부·메타데이터 주소 차단), 리다이렉트 3회. 받으면 `files` 행 + 요약·앵커, **못 받으면 지원자에게 `resume_missing` 안내 메일만 보내고 요약·자동 심사는 돌리지 않는다.** 201 `{arda_application_id, status, public_url}` · 401 키 없음/틀림 · 404 공고 없음 · **409 같은 공고에 같은 이메일**(폼과 같음) · 413 · 422 형식 · 502 base64 를 S3 에 못 올림 |
+| POST | /integrations/keys | API key 발급 (임시 — 관리 UI 전) | **admin.** 2026-09-17 까지 **인증 없이 열려 있었다** — 스키마에서 숨긴 것(`include_in_schema=False`)을 막은 것으로 착각한 경우. 원본 키는 이 응답에서 한 번만 보이고 해시만 저장된다 |
 
 ## 백그라운드 (HTTP 아님)
 

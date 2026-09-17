@@ -72,8 +72,11 @@ class TestEntrypointLoggers:
             if "__pycache__" not in p.parts
             and 'if __name__ == "__main__":' in p.read_text(encoding="utf-8")
         ]
-        # 2026-09-12 기준 2개: shared/worker.py · agent/embedder.py
-        assert len(entrypoints) <= 2, (
+        # 2026-09-16 기준 3개: shared/worker.py · agent/embedder.py ·
+        # **shared/mail_smtp.py**(밀린 메일 쓸어 담기 — ADR-0036 후속).
+        # mail_smtp 의 `main()` 은 `logging.basicConfig` 로 루트를 직접 세우므로
+        # `docker exec … python -m app.shared.mail_smtp` 로 돌려도 로그가 보인다.
+        assert len(entrypoints) <= 3, (
             f"`-m` 진입점이 늘었다: {[p.as_posix() for p in entrypoints]} — "
             "로그가 보이는지 확인하고 이 기대값을 갱신해라"
         )

@@ -16,9 +16,11 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
+from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.talent.api import applicant_auth
@@ -388,3 +390,313 @@ class TestMyOtherTokens:
         for app_row in body["applications"]:
             assert app_row["aptitudes"] == []
             assert app_row["schedules"] == []
+
+
+class TestExpiryNotYetStamped:
+    """**아직 `expired` 로 찍히지 않은 만료** (2026-09-15 앱 실기기, 민아님 보고).
+
+    만료 판정은 토큰을 열 때만 돈다(스케줄러 없음). 아무도 안 열었으면 기한이
+    지나도 DB 는 `pending` 이라, 상태만 보고 거르던 이 목록을 그대로 통과했다.
+    앱 홈은 「3일 남음」이라 적고, 눌러 들어가면 「기한이 지났습니다」가 떴다.
+
+    **끝난 것은 기한과 무관하게 남긴다** — 그걸 같이 거르면 09-09 에 고쳤던
+    "마친 면접이 화면에서 사라지는" 문제가 되돌아온다.
+    """
+
+    def _iv(self, db: Session, application: Application, admin_user: User,
+            status: str, days: int):
+        from app.models import InterviewSession
+
+        row = InterviewSession(
+            application_id=application.id,
+            token=f"iv-{status}-{days}-{application.id}",
+            status=status,
+            expires_at=datetime.now(UTC) + timedelta(days=days),
+            created_by=admin_user.id,
+        )
+        db.add(row)
+        db.flush()
+        return row
+
+    def _apt(self, db: Session, application: Application, admin_user: User,
+             status: str, days: int):
+        from app.models import AptitudeSession
+
+        row = AptitudeSession(
+            application_id=application.id,
+            token=f"apt-{status}-{days}-{application.id}",
+            status=status,
+            expires_at=datetime.now(UTC) + timedelta(days=days),
+            created_by=admin_user.id,
+        )
+        db.add(row)
+        db.flush()
+        return row
+
+    def _sch(self, db: Session, application: Application, admin_user: User,
+             status: str, days: int):
+        from app.models import ScheduleProposal
+
+        row = ScheduleProposal(
+            application_id=application.id,
+            token=f"sch-{status}-{days}-{application.id}",
+            status=status,
+            expires_at=datetime.now(UTC) + timedelta(days=days),
+            created_by=admin_user.id,
+        )
+        db.add(row)
+        db.flush()
+        return row
+
+    def _me(self, client, a: Application) -> dict:
+        token = create_applicant_token(a.email)
+        return client.get(ME, headers={"Authorization": f"Bearer {token}"}).json()
+
+    def test_기한_지난_pending_면접은_안_온다(
+        self, client, db: Session, application: Application, admin_user: User
+    ):
+        a = _applicant(db, application)
+        alive = self._iv(db, a, admin_user, "pending", days=3)
+        self._iv(db, a, admin_user, "pending", days=-1)  # 아무도 안 열어 아직 pending
+
+        rows = self._me(client, a)["applications"][0]["interviews"]
+        assert [x["token"] for x in rows] == [alive.token]
+
+    def test_기한이_지나도_끝난_면접은_남는다(
+        self, client, db: Session, application: Application, admin_user: User
+    ):
+        """지원자가 놓친 것이 아니라 **다시 볼 자리**다."""
+        a = _applicant(db, application)
+        done = self._iv(db, a, admin_user, "done", days=-30)
+
+        rows = self._me(client, a)["applications"][0]["interviews"]
+        assert [x["token"] for x in rows] == [done.token]
+
+    def test_기한_지난_pending_인적성은_안_오고_낸_것은_온다(
+        self, client, db: Session, application: Application, admin_user: User
+    ):
+        a = _applicant(db, application)
+        self._apt(db, a, admin_user, "pending", days=-1)
+        submitted = self._apt(db, a, admin_user, "done", days=-1)
+
+        rows = self._me(client, a)["applications"][0]["aptitudes"]
+        assert [x["token"] for x in rows] == [submitted.token]
+
+    def test_기한_지난_제안은_안_오고_확정은_온다(
+        self, client, db: Session, application: Application, admin_user: User
+    ):
+        """확정된 일정은 **언제로 잡혔는지 다시 볼 일**이 있다."""
+        a = _applicant(db, application)
+        self._sch(db, a, admin_user, "proposed", days=-2)
+        confirmed = self._sch(db, a, admin_user, "confirmed", days=-2)
+
+        rows = self._me(client, a)["applications"][0]["schedules"]
+        assert [x["token"] for x in rows] == [confirmed.token]
+
+    def test_목록을_봐도_상태를_바꾸지_않는다(
+        self, client, db: Session, application: Application, admin_user: User
+    ):
+        """GET 은 쓰기를 하지 않는다 — 지원자가 앱을 켤 때마다 커밋이 생기면 안 된다."""
+        a = _applicant(db, application)
+        row = self._iv(db, a, admin_user, "pending", days=-1)
+        db.commit()
+
+        self._me(client, a)
+
+        db.expire_all()
+        assert row.status == "pending", "목록 조회가 만료를 찍었다"
+
+
+class TestPasswordLogin:
+    """지원자 비밀번호 로그인 (2026-09-16, ADR-0033 개정).
+
+    생년월일은 **경우의 수가 만 단위**고 **새어도 못 바꾸는 값**이다. 게다가 지원
+    폼에서 선택이라 그 칸을 비운 사람은 영영 못 들어왔다. 접수 메일로 받은 링크에서
+    한 번 정하면 그 뒤로는 이메일 + 비밀번호로 들어온다.
+    """
+
+    SETUP = "/api/v1/public/applicant/password-setup-request"
+    LOGIN = "/api/v1/public/applicant/login"
+
+    def _issue(self, db: Session, email: str) -> str:
+        from app.talent import applicant_password
+
+        raw = applicant_password.issue_token(db, email)
+        db.commit()
+        return raw
+
+    def test_링크를_받아_비밀번호를_정하고_들어온다(
+        self, client, db: Session, application: Application
+    ):
+        a = _applicant(db, application)
+        token = self._issue(db, a.email)
+
+        opened = client.get(f"/api/v1/public/applicant/set-password/{token}")
+        assert opened.status_code == 200
+        assert opened.json()["email"] == a.email
+
+        done = client.post(
+            f"/api/v1/public/applicant/set-password/{token}",
+            json={"password": "짧지않은비밀번호1"},
+        )
+        assert done.status_code == 200
+
+        r = client.post(
+            self.LOGIN, json={"email": a.email, "password": "짧지않은비밀번호1"}
+        )
+        assert r.status_code == 200
+        assert r.json()["access_token"]
+
+    def test_한_번_쓴_링크는_죽는다(
+        self, client, db: Session, application: Application
+    ):
+        a = _applicant(db, application)
+        token = self._issue(db, a.email)
+        client.post(
+            f"/api/v1/public/applicant/set-password/{token}",
+            json={"password": "비밀번호12345"},
+        )
+
+        again = client.post(
+            f"/api/v1/public/applicant/set-password/{token}",
+            json={"password": "다른비밀번호12345"},
+        )
+        assert again.status_code == 410
+        assert client.get(f"/api/v1/public/applicant/set-password/{token}").status_code == 410
+
+    def test_새로_발급하면_이전_링크가_죽는다(
+        self, client, db: Session, application: Application
+    ):
+        """오래된 메일에서 누른 링크가 먹으면 안 된다."""
+        a = _applicant(db, application)
+        old = self._issue(db, a.email)
+        self._issue(db, a.email)
+
+        assert client.get(f"/api/v1/public/applicant/set-password/{old}").status_code == 410
+
+    def test_기한이_지난_링크는_안_먹는다(
+        self, client, db: Session, application: Application
+    ):
+        from app.models import ApplicantPasswordToken
+
+        a = _applicant(db, application)
+        token = self._issue(db, a.email)
+        row = db.scalars(select(ApplicantPasswordToken)).first()
+        row.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+        db.commit()
+
+        assert client.get(f"/api/v1/public/applicant/set-password/{token}").status_code == 410
+
+    def test_비밀번호를_정하면_생년월일로는_못_들어온다(
+        self, client, db: Session, application: Application
+    ):
+        """둘 다 열어 두면 약한 쪽으로 들어온다 — 생년월일은 SNS·이력서로 알 수 있다."""
+        a = _applicant(db, application)
+        before = client.post(
+            self.LOGIN, json={"email": a.email, "birth_date": "19980412"}
+        )
+        assert before.status_code == 200, "설정 전에는 생년월일로 들어온다"
+
+        token = self._issue(db, a.email)
+        client.post(
+            f"/api/v1/public/applicant/set-password/{token}",
+            json={"password": "비밀번호12345"},
+        )
+
+        after = client.post(
+            self.LOGIN, json={"email": a.email, "birth_date": "19980412"}
+        )
+        assert after.status_code == 401
+
+    def test_틀린_비밀번호는_401(self, client, db: Session, application: Application):
+        a = _applicant(db, application)
+        token = self._issue(db, a.email)
+        client.post(
+            f"/api/v1/public/applicant/set-password/{token}",
+            json={"password": "비밀번호12345"},
+        )
+
+        r = client.post(self.LOGIN, json={"email": a.email, "password": "틀린비밀번호"})
+        assert r.status_code == 401
+        assert "생년월일" not in r.text, "어느 쪽이 틀렸는지 알려주면 안 된다"
+
+    def test_bcrypt_가_자르는_길이는_거절한다(
+        self, client, db: Session, application: Application
+    ):
+        """한글 25자면 75바이트다. 자르면 뒤를 무엇으로 치든 같은 비밀번호가 된다."""
+        a = _applicant(db, application)
+        token = self._issue(db, a.email)
+
+        r = client.post(
+            f"/api/v1/public/applicant/set-password/{token}",
+            json={"password": "가" * 25},
+        )
+        assert r.status_code == 422
+
+    def test_없는_이메일로_요청해도_202(self, client, db: Session):
+        """있고 없고를 다르게 답하면 "이 사람이 여기 지원했나" 를 떠볼 수 있다."""
+        r = client.post(self.SETUP, json={"email": "nobody@test.local"})
+        assert r.status_code == 202
+
+    def test_지원_이력이_있으면_링크를_만든다(
+        self, client, db: Session, application: Application
+    ):
+        from app.models import ApplicantPasswordToken
+
+        a = _applicant(db, application)
+        with patch("app.talent.api.applicant_auth._send_password_mail") as sent:
+            r = client.post(self.SETUP, json={"email": a.email})
+        sent.assert_called_once()
+
+        assert r.status_code == 202
+        rows = db.scalars(
+            select(ApplicantPasswordToken).where(ApplicantPasswordToken.email == a.email)
+        ).all()
+        assert len(rows) == 1
+        assert rows[0].token_hash != ""
+
+
+class TestPasswordMail:
+    """설정 링크 메일이 **실제로 큐에 실리는지** (2026-09-16).
+
+    처음 판에서 이 경로를 통째로 mock 해 두는 바람에 **운영에서 막혔다** —
+    `ck_email_logs_stage` 가 `password_setup` 을 거부해 INSERT 가 실패했고,
+    백그라운드 작업이라 요청은 202 로 끝나 아무도 몰랐다. 지원자는 메일을 영영
+    못 받는다. 그래서 여기서는 **보내는 함수를 그대로 돌리고** 발행만 막는다.
+    """
+
+    def test_행이_생기고_큐로_나간다(
+        self, db: Session, application: Application, monkeypatch
+    ):
+        from app.models import EmailLog
+        from app.talent.api import applicant_auth as mod
+
+        a = _applicant(db, application)
+        db.commit()
+        monkeypatch.setattr("app.db.SessionLocal", lambda: _SameSession(db))
+        published: list[int] = []
+        monkeypatch.setattr("app.shared.mail.publish", lambda log_id: published.append(log_id))
+
+        mod._send_password_mail(a.id, a.email, "https://seuk.test/set-password/tok")
+
+        row = db.scalars(
+            select(EmailLog).where(EmailLog.stage == "password_setup")
+        ).first()
+        assert row is not None, "메일 행이 안 생겼다 — 지원자는 링크를 못 받는다"
+        assert row.to_email == a.email
+        assert "set-password/tok" in (row.body or ""), "본문에 링크가 없다"
+        assert row.subject, "제목이 비었다"
+        assert published == [row.id], "큐로 안 나갔다"
+
+
+class _SameSession:
+    """`with SessionLocal() as db:` 안에서 테스트 세션을 그대로 쓰게 한다."""
+
+    def __init__(self, db: Session):
+        self._db = db
+
+    def __enter__(self) -> Session:
+        return self._db
+
+    def __exit__(self, *exc) -> None:
+        return None

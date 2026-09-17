@@ -377,3 +377,105 @@ class TestMarkAnswered:
     def test_없는_번호면_404(self, client, running):
         r = client.post("/api/v1/internal/interview/tok-a/turns/9/answered", headers=self.H)
         assert r.status_code == 404
+
+
+class TestAttachAnswerAudio:
+    """전사에 실패한 답변의 **음성이 어디 있는지**를 남긴다 (2026-09-16).
+
+    실시간 면접은 음성을 저장하지 않는다. 그런데 전사가 실패하면 그 답변은
+    `[전사 지연 · …]` 자리표시자로만 남아 지원자가 한 말을 되살릴 길이 없다
+    (2026-09-15 세션 75, ADR-0038). 받아쓰지 못한 답변에 한해 워커가 음성을
+    올리고 그 키를 여기에 남긴다 — 담당자가 「다시 받아쓰기」를 누르면 쓰인다.
+    """
+
+    H = {"X-Service-Token": "test-token-x"}
+    KEY = "interviews/11111111-2222-3333-4444-555555555555/answer.wav"
+
+    @pytest.fixture()
+    def running(self, db: Session, admin_user: User) -> InterviewSession:
+        posting = JobPosting(
+            title="공고", description="본문", status="open", created_by=admin_user.id
+        )
+        db.add(posting)
+        db.flush()
+        application = Application(
+            job_posting_id=posting.id,
+            name="지원자최",
+            email="audio@test.local",
+            phone="010-0000-0000",
+            privacy_agreed_at=datetime.now(UTC),
+        )
+        db.add(application)
+        db.flush()
+        session = InterviewSession(
+            application_id=application.id,
+            token="tok-audio",
+            status="in_progress",
+            created_by=admin_user.id,
+        )
+        db.add(session)
+        db.flush()
+        db.add(InterviewTurn(session_id=session.id, seq=1, question="첫 질문"))
+        db.add(
+            InterviewTurn(
+                session_id=session.id, seq=2, question="둘째 질문",
+                transcript="제대로 받아쓴 답변입니다",
+            )
+        )
+        db.flush()
+        return session
+
+    def _turn(self, db: Session, session: InterviewSession, seq: int) -> InterviewTurn:
+        return db.query(InterviewTurn).filter_by(session_id=session.id, seq=seq).one()
+
+    def test_아직_글이_없는_회차에_음성을_붙인다(self, client, db, running):
+        r = client.post(
+            "/api/v1/internal/interview/tok-audio/turns/1/audio",
+            headers=self.H, json={"audio_s3_key": self.KEY},
+        )
+        assert r.status_code == 200
+        assert self._turn(db, running, 1).audio_s3_key == self.KEY
+
+    def test_자리표시자_회차에도_붙인다(self, client, db, running):
+        turn = self._turn(db, running, 1)
+        turn.transcript = "[전사 지연 · 발화 43.9초]"
+        db.flush()
+
+        r = client.post(
+            "/api/v1/internal/interview/tok-audio/turns/1/audio",
+            headers=self.H, json={"audio_s3_key": self.KEY},
+        )
+        assert r.status_code == 200
+
+    def test_이미_받아쓴_답변에는_안_붙인다(self, client, db, running):
+        """붙이면 담당자가 멀쩡한 답변을 다시 받아쓰게 된다."""
+        r = client.post(
+            "/api/v1/internal/interview/tok-audio/turns/2/audio",
+            headers=self.H, json={"audio_s3_key": self.KEY},
+        )
+        assert r.status_code == 409
+        assert self._turn(db, running, 2).audio_s3_key is None
+
+    def test_남의_파일_키는_거절한다(self, client, db, running):
+        """키를 그냥 믿으면 남의 이력서를 답변이라고 넘겨 읽게 할 수 있다."""
+        r = client.post(
+            "/api/v1/internal/interview/tok-audio/turns/1/audio",
+            headers=self.H,
+            json={"audio_s3_key": "applications/9999/resume.pdf"},
+        )
+        assert r.status_code == 422
+        assert self._turn(db, running, 1).audio_s3_key is None
+
+    def test_없는_회차는_404(self, client, running):
+        r = client.post(
+            "/api/v1/internal/interview/tok-audio/turns/9/audio",
+            headers=self.H, json={"audio_s3_key": self.KEY},
+        )
+        assert r.status_code == 404
+
+    def test_서비스_토큰이_없으면_거절한다(self, client, running):
+        r = client.post(
+            "/api/v1/internal/interview/tok-audio/turns/1/audio",
+            json={"audio_s3_key": self.KEY},
+        )
+        assert r.status_code in (401, 403)
