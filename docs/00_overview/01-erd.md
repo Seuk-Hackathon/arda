@@ -1,6 +1,7 @@
 # 01. 테이블 정의서 (ERD)
 
-> **상태: 확정 v2.6 · 2026-09-17** — v2.6: `email_logs.stage` 에 **`resume_missing`** 허용(**alembic `0025`**). 회사 통합 API 로 온 이력서 URL 을 받지 못했다고 지원자에게 알리는 기능성 메일([ADR-0037](../03_decision/0037-회사-통합-API.md) Phase B). 0024 와 같은 사고를 피하려고 코드와 같은 커밋에 넣었다.
+> **상태: 확정 v2.7 · 2026-09-17** — v2.7: **`file_blobs`** 추가(**alembic `0026`**, #282 온프레미스 다운로드). #282 에서는 `0023` 으로 들어와 **기존 `0023`(applicant_password)과 번호가 겹쳤다** — 운영 DB 에서 표가 안 생기는 문제라 0026 으로 옮기고 "없을 때만 만든다"로 고쳤다. 번호 중복은 이제 `tests/test_alembic_revisions.py` 가 CI 에서 막는다.
+> v2.6 · 2026-09-17 — v2.6: `email_logs.stage` 에 **`resume_missing`** 허용(**alembic `0025`**). 회사 통합 API 로 온 이력서 URL 을 받지 못했다고 지원자에게 알리는 기능성 메일([ADR-0037](../03_decision/0037-회사-통합-API.md) Phase B). 0024 와 같은 사고를 피하려고 코드와 같은 커밋에 넣었다.
 > v2.5 · 2026-09-16 — v2.5: `email_logs.stage` 에 **`password_setup`** 허용(**alembic `0024`**). 비밀번호 설정 링크 메일은 어느 전형 단계에도 안 붙는 기능성 메일이라 `custom`(담당자가 직접 쓴 메일)과도 구별한다. **운영에서 실제로 막혔던 것** — 제약이 거부해 INSERT 가 실패했고 백그라운드라 요청은 202 로 끝나 아무도 몰랐다.
 > v2.4 · 2026-09-16 — v2.4: 지원자 비밀번호 로그인 2테이블 `applicant_credentials`·`applicant_password_tokens` 추가 ([ADR-0033](../03_decision/0033-지원자-앱-로그인.md) 개정). 신규 테이블만 만들므로 기존 행 영향 없음. **alembic `0023`**.
 > v2.3 · 2026-09-11 — v2.3: `interview_findings.turn_id` 추가 — 서류 대조를 **답변마다** 만들어 그 답변에 붙인다(담당자 화상 방이 답변 밑에 띄운다). NULL 허용이라 기존 행 영향 없음. **alembic `0019`**. 같은 날 `interview_turns.answered_at`(**alembic `0018`**)도 들어갔다 — 표에만 반영돼 있던 것을 여기 함께 적는다.
@@ -219,6 +220,18 @@ UNIQUE(job_posting_id, user_id).
 **미결**: S3를 쓰지 않고 로컬 디스크 저장으로 가면 `s3_key` → `storage_path`로 이름이 바뀐다. 지금 바꾸면 한 줄이고, API·화면이 올라간 뒤면 그것들까지 따라간다.
 
 비고: 화면 표시는 규격 파일명(`{지원자명}_{유형}.{확장자}`)을 코드에서 생성해 쓰고, `filename`(원본)은 보존해 보조 표기한다. 허용 형식 pdf·docx·hwp(hwpx). 자소서가 이력서에 포함된 경우 `resume` 1건만 존재할 수 있다.
+
+## file_blobs — 파일 본문 DB 보관 (v2.7 · alembic `0026`, 온프레미스)
+
+`files` 1행에 최대 1행. 있으면 다운로드가 S3 presign 대신 **백엔드 스트리밍**(60초·1회용 티켓)으로 간다 — 온프레미스 MinIO 주소가 브라우저에서 안 풀려서다(#282). **AWS 운영에서는 비어 있고** 기존 S3 경로 그대로다.
+
+| 컬럼 | 타입 | 제약 | 설명 |
+|---|---|---|---|
+| file_id | bigint | PK, FK → files.id **ON DELETE CASCADE** | 파일이 지워지면 본문도 같이 |
+| content | bytea | NOT NULL | 파일 본문 |
+| size_bytes | bigint | NOT NULL | 검증용 (`files.size_bytes` 와 같아야 한다) |
+| sha256 | char(64) | NOT NULL | 이관 멱등성 |
+| created_at | timestamptz | NOT NULL, default now() | |
 
 ## document_anchors — 제출물 무결성 앵커 (v1.8)
 

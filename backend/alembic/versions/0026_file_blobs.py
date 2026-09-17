@@ -1,8 +1,19 @@
 """file_blobs — 이력서 파일 본문을 DB 안에 둔다 (온프레미스 심사용, 2026-09-17)
 
-Revision ID: 0023
-Revises: 0022
+Revision ID: 0026
+Revises: 0025
 Create Date: 2026-09-17
+
+> **번호 충돌 복구 (2026-09-17, woojeongalex).** #282 에서 이 파일은 `0023`(Revises
+> 0022)으로 들어왔는데, `0023` 은 이미 `0023_applicant_password.py`(09-16)가 쓰고
+> 있었다. alembic 은 경고만 내고 한쪽을 고르므로 **AWS 운영 DB(이미 0024)에서는
+> 이 테이블이 영영 안 만들어지고**, 다운로드(`files.py` 가 매번 `file_blobs` 를
+> 조회)가 전부 500 이 된다. 그래서 맨 뒤(0026)로 옮겼다.
+>
+> 옛 번호로 **이미 이 파일을 실행한 환경**(온프레미스 심사 서버)도 있을 수 있다.
+> 그 환경은 반대로 `applicant_*` 두 테이블이 빠졌을 수 있다. 그래서 여기서는
+> **없을 때만 만든다** — 둘 다. 어느 쪽 환경이든 `alembic upgrade head` 한 줄로
+> 같은 모양이 된다.
 
 **왜 DB 에 두나 (설계 반전이라 사연이 필요)**: 원래 이력서는 S3/MinIO 에 두고
 브라우저가 presigned URL 로 직접 내려받는다 — 서버가 파일 바이트를 안 지나가게
@@ -24,16 +35,40 @@ MinIO 를 별도 서브도메인으로 노출하는 방법도 있었지만 심�
 내리기: 데이터 손실이라 정확히 이 테이블 없을 때만 안전.
 """
 
+import importlib.util
+from pathlib import Path
+
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0023"
-down_revision = "0022"
+revision = "0026"
+down_revision = "0025"
 branch_labels = None
 depends_on = None
 
 
+def _has(table: str) -> bool:
+    return sa.inspect(op.get_bind()).has_table(table)
+
+
+def _applicant_password_upgrade():
+    """`0023_applicant_password.upgrade` 를 그대로 빌려 온다 — 정의를 두 벌 두지 않는다."""
+    path = Path(__file__).with_name("0023_applicant_password.py")
+    spec = importlib.util.spec_from_file_location("_rev0023_applicant_password", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.upgrade
+
+
 def upgrade() -> None:
+    # 옛 번호(0023)로 file_blobs 만 실행되고 applicant_* 가 빠진 환경을 메운다.
+    # 두 테이블은 한 리비전에서 같이 생기므로 하나만 있는 경우는 없다.
+    if not _has("applicant_credentials"):
+        _applicant_password_upgrade()()
+
+    if _has("file_blobs"):
+        return  # 옛 번호로 이미 만들어진 환경
+
     # file_id 를 PK 로 쓰면 파일 1개 = 블롭 1개(1:1). files 가 지워지면 블롭도
     # CASCADE 로 같이 지워야 한다 — 파일 메타만 지워지고 몇 MB 짜리 바이트가
     # 남으면 원인 모를 용량 증가로 이어진다.
@@ -62,4 +97,5 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # applicant_* 는 0023 의 몫이라 여기서 지우지 않는다.
     op.drop_table("file_blobs")
