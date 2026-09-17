@@ -483,7 +483,46 @@ class TestTwoSocketsOneSession:
 
         assert len(session.audio) == before, "담당자의 무음이 답변에 섞였다"
 
+    def _video(self, session, *, recruiter: bool):
+        async def run():
+            await srv._on_binary(
+                None, None, session,
+                bytes([srv.KIND_VIDEO]) + b"\xff\xd8fake",
+                is_recruiter=recruiter,
+            )
+            await _drain()
+
+        asyncio.run(run())
+
+    def test_웹_지원자가_얼굴을_보내면_담당자_얼굴은_버린다(self, monkeypatch):
+        """같은 얼굴이 두 줄기로 들어오면 recv 가 두 배가 된다 (2026-09-17, 민아님 (가))."""
+        session = srv._acquire_session("tok")
+        monkeypatch.setattr(
+            srv.iw, "face_row_search_full", lambda *_: ([0.0] * 7, 0, None)
+        )
+
+        self._video(session, recruiter=False)   # 웹 지원자 페이지
+        self._video(session, recruiter=True)    # 담당자 방 — 같은 순간
+
+        assert session.frame_stats["recv"] == 1, "지원자 원본만 세야 한다"
+        assert session.frame_stats["dropped_recruiter"] == 1
+
+    def test_지원자_얼굴이_끊기면_담당자_얼굴을_쓴다(self, monkeypatch):
+        """지원자 탭이 가려져 전송이 멈추면 담당자 방이 이어받는다."""
+        session = srv._acquire_session("tok")
+        monkeypatch.setattr(
+            srv.iw, "face_row_search_full", lambda *_: ([0.0] * 7, 0, None)
+        )
+
+        self._video(session, recruiter=False)
+        session.applicant_video_at -= srv.iw.APPLICANT_VIDEO_FRESH_SEC + 1
+        self._video(session, recruiter=True)
+
+        assert session.frame_stats["recv"] == 2
+        assert session.frame_stats["dropped_recruiter"] == 0
+
     def test_담당자가_보낸_얼굴은_센다(self, monkeypatch):
+        """앱 지원자는 얼굴을 안 보낸다 — 담당자 방이 유일한 출처다."""
         session = srv._acquire_session("tok")
         monkeypatch.setattr(
             srv.iw, "face_row_search_full", lambda *_: ([0.0] * 7, 0, None)
