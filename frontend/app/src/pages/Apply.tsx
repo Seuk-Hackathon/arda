@@ -243,7 +243,13 @@ export default function Apply() {
     )
   }
 
-  const ready = name.trim() !== '' && email.trim() !== '' && phone.trim() !== '' && agreed
+  const ready =
+    name.trim() !== '' &&
+    email.trim() !== '' &&
+    phone.trim() !== '' &&
+    resume !== null &&
+    selfIntro.trim().length >= 50 &&
+    agreed
 
   return (
     <Shell title={load.posting.title}>
@@ -276,19 +282,21 @@ export default function Apply() {
         <Field label="경력 연차" value={careerYears} onChange={setCareerYears} type="number" placeholder="신입이면 0" disabled={pending} />
 
         <label className={styles.label}>
-          자기소개서
+          자기소개서 *
           <textarea
             className={styles.textarea}
             rows={6}
             value={selfIntro}
             onChange={(e) => setSelfIntro(e.target.value)}
-            placeholder="자기소개서를 입력해 주세요"
+            placeholder="자기소개서를 입력해 주세요 (50자 이상)"
             disabled={pending}
           />
+          <span className={styles.hint}>{selfIntro.trim().length} / 50자 이상</span>
         </label>
 
-        <FilePick label="이력서" file={resume} onPick={setResume} disabled={pending} pct={resumePct} />
+        <FilePick label="이력서 *" file={resume} onPick={setResume} disabled={pending} pct={resumePct} />
         <FilePick label="자기소개서 파일" file={coverLetter} onPick={setCoverLetter} disabled={pending} pct={coverPct} />
+        {resume === null && <p className={styles.hint} style={{ color: 'var(--color-error, #ef4444)' }}>이력서 파일은 필수입니다.</p>}
         <p className={styles.hint}>PDF · DOCX · HWP · 10MB 이하</p>
 
         <label className={styles.agree}>
