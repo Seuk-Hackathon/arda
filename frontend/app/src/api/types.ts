@@ -377,8 +377,27 @@ export interface InterviewSessionDetail extends InterviewSession {
     weights?: Record<string, number>
     prompt?: string
     model?: string
+    /** 면접 중 실시간 분석 요약 (2026-09-17). 점수 재료가 아니다 — 판정이 없던 면접은 null. */
+    live?: InterviewLiveSummary | null
   } | null
   scored_at?: string | null
+}
+
+/** 실시간 분석 수치 한 묶음 — 면접 전체 또는 질문 하나 (backend `live_summary._bucket_stats`). */
+export interface InterviewLiveStats {
+  n: number
+  truth?: number
+  expressions?: Array<{ label: string; pct: number }>
+  blink_per_sec?: number
+  flags_pct?: Record<string, number>
+  voice?: { pitch_hz?: number; pitch_var_st?: number; loud_var_db?: number; voiced_pct?: number }
+}
+
+export interface InterviewLiveSummary {
+  summary: string
+  /** ai = AI 문장(숫자 검사 통과) · template = 고정 틀 문장 */
+  summary_source: 'ai' | 'template'
+  stats: { overall: InterviewLiveStats; per_question: Array<InterviewLiveStats & { seq: number }> }
 }
 
 /* ── 제출물 무결성 (ADR-0028) ─────────────────────────────────────
