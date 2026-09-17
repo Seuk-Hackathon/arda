@@ -14,6 +14,8 @@
 1. **즉시 폴백** — `mail.publish` 가 n8n 에 못 실으면 여기서 바로 SMTP 로 보낸다.
 2. **밀린 것 쓸어 담기** (`flush_pending`) — n8n 이 웹훅은 받고(200) 그 뒤에 죽으면
    행은 `queued` 로 남는다. 그건 발행 시점에 못 잡으므로 나중에 훑어서 보낸다.
+   **API 프로세스가 몇 분마다 스스로 돈다** (2026-09-17, `start_flush_loop`) — 전에는
+   사람이 명령을 쳐야 했고, 그래서 사람이 모르는 동안은 아무도 안 보냈다.
 
 ## 보내는 규칙은 워커와 같다
 
@@ -26,6 +28,7 @@ from __future__ import annotations
 import logging
 import os
 import smtplib
+import threading
 from datetime import UTC, datetime, timedelta
 from email.message import EmailMessage
 from email.utils import formataddr
@@ -51,6 +54,14 @@ PENDING_AFTER_MIN = int(os.getenv("MAIL_PENDING_AFTER_MIN", "10"))
 # 한 번에 쓸어 담을 상한. 장애가 길었으면 여러 번 돌린다 — 한 번에 수백 통을
 # 밀어 넣으면 지메일이 계정을 잠근다.
 FLUSH_LIMIT = int(os.getenv("MAIL_FLUSH_LIMIT", "50"))
+
+# 쓸어 담기를 스스로 도는 간격(분). 0 이면 끈다 — 그때는 예전처럼 손으로 돌린다.
+FLUSH_INTERVAL_MIN = float(os.getenv("MAIL_FLUSH_INTERVAL_MIN", "5"))
+
+# 쓸어 담기가 같은 행을 몇 번까지 다시 보내 보나. 넘으면 `failed` 로 접는다 —
+# 주소가 틀렸거나 계정이 잠긴 행을 5분마다 영원히 두드리지 않게. 접힌 행은
+# n8n 이 접은 것과 같이 **사람이 보고 판단한다.**
+FLUSH_MAX_RETRY = int(os.getenv("MAIL_FLUSH_MAX_RETRY", "3"))
 
 
 def available() -> bool:
@@ -155,32 +166,102 @@ def flush_pending(db: Session, *, after_min: int | None = None, limit: int | Non
     성공으로 보여 폴백이 안 걸린다. 그래서 나중에 훑는 경로가 따로 필요하다.
 
     **`failed` 는 건드리지 않는다.** 상한을 넘겨 이미 접은 건이고, 되살리려면
-    사람이 보고 판단해야 한다.
+    사람이 보고 판단해야 한다. n8n 이 `failed` 를 알려 온 것도 같다 — n8n 과 이
+    폴백은 **같은 SMTP 계정**이라 다시 보내도 대개 같은 이유로 실패하고, n8n 쪽이
+    실제로는 보낸 뒤 시간초과로 실패를 적었으면 지원자가 두 통을 받는다.
+
+    **한 행씩 잠그고 보낸다**(`FOR UPDATE SKIP LOCKED`). `send_log` 가 행마다 커밋해
+    잠금이 풀리므로, 한꺼번에 잠그면 두 번째 행부터 다른 프로세스와 겹칠 수 있다.
+    프로세스가 둘이 되거나 손으로 돌린 명령과 자동 반복이 겹쳐도 같은 행을 두 번
+    보내지 않는다.
+
+    `FLUSH_MAX_RETRY` 번 보내도 안 나간 행은 `failed` 로 접는다.
     """
     after = after_min if after_min is not None else PENDING_AFTER_MIN
     cap = limit if limit is not None else FLUSH_LIMIT
     cutoff = datetime.now(UTC) - timedelta(minutes=after)
 
-    rows = db.scalars(
-        select(EmailLog)
-        .where(EmailLog.status == "queued", EmailLog.created_at < cutoff)
-        .order_by(EmailLog.id)
-        .limit(cap)
-    ).all()
-
-    sent = sum(1 for log in rows if send_log(db, log))
-    if rows:
-        logger.warning(
-            "밀린 메일 %s건 중 %s건을 SMTP 폴백으로 보냈다 (%s분 이상 대기)",
-            len(rows), sent, after,
+    tried: list[int] = []
+    sent = 0
+    given_up = 0
+    while len(tried) < cap:
+        query = (
+            select(EmailLog)
+            .where(
+                EmailLog.status == "queued",
+                EmailLog.created_at < cutoff,
+                EmailLog.retry_count < FLUSH_MAX_RETRY,
+            )
+            .order_by(EmailLog.id)
+            .limit(1)
+            .with_for_update(skip_locked=True)
         )
-    return {"found": len(rows), "sent": sent}
+        if tried:
+            # 이번 회차에 실패한 행은 queued 로 남는다 — 같은 회차에 다시 집지 않는다
+            query = query.where(EmailLog.id.not_in(tried))
+        log = db.scalar(query)
+        if log is None:
+            break
+        tried.append(log.id)
+        if send_log(db, log):
+            sent += 1
+        elif log.status == "queued" and log.retry_count >= FLUSH_MAX_RETRY:
+            log.status = "failed"
+            db.commit()
+            given_up += 1
+            logger.error(
+                "SMTP 폴백 %s번 실패 — failed 로 접는다 email_log_id=%s (사람이 확인할 것)",
+                FLUSH_MAX_RETRY, log.id,
+            )
+        else:
+            db.commit()  # 잠금을 푼다
+
+    if tried:
+        logger.warning(
+            "밀린 메일 %s건 중 %s건을 SMTP 폴백으로 보냈다 (%s분 이상 대기 · 접음 %s)",
+            len(tried), sent, after, given_up,
+        )
+    return {"found": len(tried), "sent": sent, "given_up": given_up}
+
+
+def start_flush_loop() -> threading.Event | None:
+    """쓸어 담기를 `FLUSH_INTERVAL_MIN` 분마다 도는 스레드를 띄운다 (2026-09-17, 수택님 B1).
+
+    API 기동 때 한 번 부른다. SMTP 설정이 없거나 간격이 0 이면 띄우지 않고 None.
+    돌려준 Event 를 set 하면 멈춘다. 한 회차가 실패해도 다음 회차는 돈다.
+    """
+    if not available() or FLUSH_INTERVAL_MIN <= 0:
+        logger.info(
+            "밀린 메일 자동 쓸어 담기 꺼짐 (SMTP 설정 %s · 간격 %s분)",
+            "있음" if available() else "없음", FLUSH_INTERVAL_MIN,
+        )
+        return None
+
+    from app.db import SessionLocal
+
+    stop = threading.Event()
+
+    def loop() -> None:
+        while not stop.wait(FLUSH_INTERVAL_MIN * 60):
+            try:
+                with SessionLocal() as db:
+                    flush_pending(db)
+            except Exception:
+                logger.exception("밀린 메일 자동 쓸어 담기 실패 — 다음 회차에 다시 한다")
+
+    threading.Thread(target=loop, name="mail-flush", daemon=True).start()
+    logger.info(
+        "밀린 메일 자동 쓸어 담기 켜짐 — %s분마다 · %s분 넘게 queued 인 행",
+        FLUSH_INTERVAL_MIN, PENDING_AFTER_MIN,
+    )
+    return stop
 
 
 def main() -> None:  # pragma: no cover - 운영 진입점
     """`python -m app.shared.mail_smtp` — 밀린 메일을 쓸어 담는다.
 
-    systemd timer 로 몇 분마다 돌리거나, n8n 장애를 확인한 뒤 손으로 한 번 돌린다.
+    API 가 스스로 돌기 때문에(`start_flush_loop`) 평소에는 칠 일이 없다. n8n 장애를
+    확인한 뒤 기다리지 않고 바로 보내고 싶을 때 손으로 한 번 돌린다.
     """
     import logging as _logging
 

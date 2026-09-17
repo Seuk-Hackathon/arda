@@ -26,10 +26,15 @@ if config.config_file_name is not None:
 
 target_metadata = Base.metadata
 
-DATABASE_URL = os.getenv("DATABASE_URL")
+# 이행은 표를 만들고 고치므로 **관리자 롤**이 필요하다. 앱이 `arda_app`(권한을 좁힌 롤)
+# 으로 붙게 된 뒤(ADR-0028 1.6단계 · 이슈 #7)에는 `DATABASE_URL` 로는 이행이 안 된다.
+# 그래서 `MIGRATION_DATABASE_URL` 이 있으면 그것을 먼저 쓴다. 운영에서는 배포 스크립트가
+# root 전용 파일(`~/arda/.env.migrate`)에서 이 값을 이행 한 번에만 넣는다 — api
+# 컨테이너 환경에는 관리자 비밀번호가 없다. 없으면 지금까지처럼 `DATABASE_URL`.
+DATABASE_URL = os.getenv("MIGRATION_DATABASE_URL") or os.getenv("DATABASE_URL")
 if not DATABASE_URL:
     raise SystemExit(
-        "DATABASE_URL 이 필요하다. 예:\n"
+        "DATABASE_URL(또는 MIGRATION_DATABASE_URL) 이 필요하다. 예:\n"
         '  DATABASE_URL="postgresql+psycopg://postgres:postgres@localhost:5432/arda" '
         "uv run alembic upgrade head"
     )

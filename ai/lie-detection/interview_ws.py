@@ -20,7 +20,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 import threading
@@ -454,7 +453,18 @@ LAST_ROTATION: int | None = None
 #   decoded>0, face=0      → 그림은 멀쩡한데 얼굴을 못 찾는다 (흑백·크기·화질)
 #
 # `recv` 는 소켓이 받은 즉시(app.py `_on_binary`), `in` 은 분석에 들어간 것만 센다.
-FRAME_STATS = {"recv": 0, "dropped_busy": 0, "in": 0, "decoded": 0, "face": 0}
+FRAME_STATS = {
+    "recv": 0, "dropped_busy": 0, "in": 0, "decoded": 0, "face": 0,
+    # 지원자가 얼굴을 보내는 중이라 버린 담당자 방 프레임 (2026-09-17). `recv` 에 안 든다.
+    "dropped_recruiter": 0,
+}
+
+# 지원자 소켓의 얼굴이 이 시간 안에 왔으면 **담당자 방 얼굴은 버린다** (2026-09-17,
+# 민아님 제안 (가)). 웹 지원자는 자기 카메라를 직접 보내고, 담당자 방은 WebRTC 로 받은
+# 같은 얼굴을 한 번 더 떠서 보낸다 — 둘 다 받으면 같은 순간이 두 번 세어진다. 지원자
+# 쪽이 원본(압축 한 번 덜)이라 그쪽을 쓴다. 앱 지원자는 얼굴을 안 보내므로 담당자
+# 방 것만 들어온다. 지원자 탭이 가려져 전송이 멈추면 이 시간 뒤에 담당자 것을 쓴다.
+APPLICANT_VIDEO_FRESH_SEC = float(os.getenv("APPLICANT_VIDEO_FRESH_SEC", "3"))
 
 
 def _rotated(img, degrees: int):
@@ -544,12 +554,20 @@ class InterviewSession:
         # 어느 면접의 숫자인지 알 수 없다. 앱 화면의 「얼굴 N · 실패 M」 과 맞춰
         # **「앱이 안 보내는 것」과 「서버가 못 찾는 것」을 한 면접 안에서 가르려면**
         # 세션마다 세야 한다. 끝날 때 로그 한 줄로 남긴다 (app.py).
-        self.frame_stats = {"recv": 0, "dropped_busy": 0, "in": 0, "face": 0}
+        self.frame_stats = {
+            "recv": 0, "dropped_busy": 0, "in": 0, "face": 0, "dropped_recruiter": 0,
+        }
+        # 지원자 소켓에서 마지막으로 얼굴이 온 시각. 얼굴 출처를 하나로 고르는 데 쓴다
+        # (`APPLICANT_VIDEO_FRESH_SEC`). 한 번도 안 왔으면 -inf.
+        self.applicant_video_at = float("-inf")
         # 이 면접이 끝났는가. **소켓이 닫히는 것과 별개다** — 지원자 쪽이 소켓을
         # 안 닫아도(앱이 마이크를 놓지 않거나 웹 탭을 열어 두면) 여기서부터는 더
         # 듣지 않는다 (2026-09-16, app.py `_close`·`_finished_elsewhere`).
         self.done = False
-        self.last_done_check = 0.0
+        # "한 번도 안 물어봤다". 0.0 으로 두면 `time.monotonic()`(부팅 후 초)이 60 보다
+        # 작은 기계 — 막 켜진 WSL·컨테이너 호스트 — 에서 첫 확인이 1분 밀린다
+        # (2026-09-17, 테스트가 가끔 깨진 원인).
+        self.last_done_check = float("-inf")
         # 이 면접의 프레임이 몇 도 누워 있는가. **처음 얼굴을 찾을 때 정해진다**
         # (`face_row_search`). None 이면 아직 안 정해진 것이고, 그동안만 네 방향을
         # 뒤진다. 각도가 굳혀진 뒤 5초 이상 얼굴을 못 찾으면 None 으로 되돌려

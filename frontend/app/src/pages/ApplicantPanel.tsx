@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { ApiError } from '../api/client'
-import { agent as agentApi, applications, aptitude as aptitudeApi, evaluations, files as filesApi, interviews as interviewsApi, mail as mailApi, notes as notesApi, postings as postingsApi, stages } from '../api/endpoints'
+import { agent as agentApi, applications, aptitude as aptitudeApi, files as filesApi, interviews as interviewsApi, mail as mailApi, notes as notesApi, postings as postingsApi, stages } from '../api/endpoints'
 import type { ApplicationDetail, AptitudeDetail, EmailLogItem, FileOut, InterviewSession, InterviewSessionDetail, Note, Stage, StageHistoryItem } from '../api/types'
 import SidePanel from '../components/SidePanel'
 import IntegrityBadge from '../components/IntegrityBadge'
@@ -122,6 +123,38 @@ function nextStages(from: Stage): Stage[] {
 const PROGRESS_STAGES: Stage[] = ['applied', 'screening', 'interview', 'accepted']
 const PROGRESS_LABEL: Record<string, string> = { applied: '접수', screening: '서류', interview: '면접', accepted: '합격' }
 
+/* ── 어느 단계에서 떨어졌나 (2026-09-17, 멘토링 의견) ────────────
+   전에는 서류에서 떨어진 사람과 최종 면접에서 떨어진 사람이 **같은 화면**
+   이었다 — 둘 다 「불합격」 한 마디였다.
+
+   값은 `stage_history` 에 이미 있다. 상세 응답이 이력을 같이 주므로
+   서버를 더 부르지 않는다.
+
+   **뜻이 분명한 둘만 이름을 붙인다.** `applied → rejected` 도 규칙상
+   가능한데(`stages.py`: 불합격은 어느 단계에서든 진입 가능 — 아르 자동
+   심사가 접수 직후 떨어뜨리는 경우), **「접수 탈락」이라고 쓰지 않는다**:
+   접수는 성공한 것이라 말이 뒤집힌다. `accepted → rejected`(합격 후 철회)
+   도 실 케이스가 없어(2026-09-17 팀장 확인) 「불합격」으로 묶는다. */
+const REJECTED_LABEL: Record<string, string> = {
+  screening: '서류 탈락',
+  interview: '면접 탈락',
+}
+
+/** 불합격 직전 단계. 불합격이 아니거나 이력이 없으면 null */
+function rejectedFrom(history: StageHistoryItem[]): string | null {
+  /* 뒤에서 찾는다 — 되돌렸다 다시 떨어뜨린 경우 **마지막 판단**이 지금이다 */
+  for (let i = history.length - 1; i >= 0; i -= 1) {
+    if (history[i].to_stage === 'rejected') return history[i].from_stage
+  }
+  return null
+}
+
+/** 화면에 쓰는 한 마디. 단계를 모르면 그냥 「불합격」 */
+function rejectedLabel(history: StageHistoryItem[]): string {
+  const from = rejectedFrom(history)
+  return (from && REJECTED_LABEL[from]) ?? '불합격'
+}
+
 
 /* ── 탭 ──────────────────────────────────────────────────
    판단 재료(개요) · 도구(면접·메모) · 로그(이력) 를 가른다.
@@ -151,9 +184,11 @@ function headLine(d: ApplicationDetail): string {
    패널에서 제일 큰 요소를 누를 수 있게 하면, 메일까지 나가는 동작이
    스크롤하다 빗나간 손가락에 걸린다. 동작은 옆의 버튼 하나뿐이다. */
 function StageTrack({
-  current, editing = false, target = null, canPick, onPick,
+  current, history = [], editing = false, target = null, canPick, onPick,
 }: {
   current: Stage
+  /* 불합격이 **어디서** 났는지를 여기서 읽는다 (2026-09-17) */
+  history?: StageHistoryItem[]
   /* 고르는 상태인가. 평소에는 읽는 것이라 클릭을 받지 않는다 */
   editing?: boolean
   target?: Stage | null
@@ -161,15 +196,28 @@ function StageTrack({
   onPick?: (s: Stage) => void
 }) {
   const rejected = current === 'rejected'
-  const curIdx = PROGRESS_STAGES.indexOf(current)
+
+  /* **불합격은 진행 배열 밖이라 `indexOf` 가 -1 이다** (2026-09-17 고침).
+     그대로 두면 `i < curIdx` 가 늘 false 라 **지나온 칸이 하나도 안 밝았다**
+     — 서류에서 떨어진 사람과 최종에서 떨어진 사람이 같은 그림이었다.
+     떨어지기 직전 단계를 현재 칸으로 삼아 거기까지 밝힌다. */
+  const fellAt = rejected ? PROGRESS_STAGES.indexOf(rejectedFrom(history) as Stage) : -1
+  const curIdx = rejected ? fellAt : PROGRESS_STAGES.indexOf(current)
+
+  const endLabel = rejected ? rejectedLabel(history) : ''
   const label = rejected
-    ? '불합격'
+    ? endLabel
     : `진행 ${curIdx + 1} / ${PROGRESS_STAGES.length} · ${PROGRESS_LABEL[current] ?? current}`
 
   return (
     <div className={styles.track} role={editing ? undefined : 'img'} aria-label={editing ? undefined : label}>
       {PROGRESS_STAGES.map((s, i) => {
-        const cls = `${styles.trackStep} ${i < curIdx ? styles.trackDone : ''} ${i === curIdx ? (s === 'accepted' ? styles.trackAccepted : styles.trackNow) : ''}`
+        /* 불합격은 **떨어진 칸까지 지나온 것으로** 칠한다. 그 칸을 「진행 중」
+           으로 두면 끝난 사람이 아직 그 단계에 있는 것처럼 읽힌다 — 끝났다는
+           말은 옆의 「서류 탈락」 칸이 한다 */
+        const done = rejected ? i <= curIdx : i < curIdx
+        const now = !rejected && i === curIdx
+        const cls = `${styles.trackStep} ${done ? styles.trackDone : ''} ${now ? (s === 'accepted' ? styles.trackAccepted : styles.trackNow) : ''}`
 
         if (!editing) return <div key={s} className={cls}><b>{PROGRESS_LABEL[s]}</b></div>
 
@@ -195,7 +243,7 @@ function StageTrack({
           고르는 중에는 StageChanger 의 버튼이 이 자리를 대신한다 */}
       {rejected && !editing && (
         <div className={`${styles.trackStep} ${styles.trackRejected}`}>
-          <b>불합격</b>
+          <b>{endLabel}</b>
         </div>
       )}
     </div>
@@ -224,9 +272,11 @@ function StageTrack({
    어려운 동작에서 제일 하면 안 되는 일이다. 불합격은 진행의 끝이 아니라
    **종료**라 램프 밖에 두는 것이 의미상으로도 맞다(StageTrack 도 그렇게 그린다). */
 function StageChanger({
-  current, busy, error, onCommit,
+  current, history, busy, error, onCommit,
 }: {
   current: Stage
+  /* 진행 바가 「어디서 떨어졌나」를 읽는 데 쓴다 (2026-09-17) */
+  history: StageHistoryItem[]
   busy: boolean
   error: string | null
   onCommit: (to: Stage, reason: string) => void
@@ -287,6 +337,7 @@ function StageChanger({
       >
         <StageTrack
           current={current}
+          history={history}
           editing={editing}
           target={target}
           canPick={canPick}
@@ -400,13 +451,12 @@ const MAIL_ON_CHANGE: Partial<Record<Stage, string>> = {
    평가 → 아르 요약 → 지원 정보 → 연락처 → 첨부 → 인적성 검사.
    판단에 쓰는 것만 모았다. */
 function OverviewTab({
-  detail, applicationId, onScored, onMailSent, startRating,
+  detail, applicationId, onScored, onMailSent,
 }: {
   detail: ApplicationDetail
   applicationId: number
   onScored: () => void
   onMailSent: () => void
-  startRating: boolean
 }) {
   const [postingTitle, setPostingTitle] = useState<string | null>(null)
   /* 요약 재생성 (2026-09-12) — **버튼에 핸들러가 없어 눌러도 아무 일도 일어나지
@@ -453,7 +503,7 @@ function OverviewTab({
 
   return (
     <>
-      <EvalRow detail={detail} applicationId={applicationId} onScored={onScored} startOpen={startRating} />
+      <SummaryLinkRow detail={detail} applicationId={applicationId} />
 
       <hr className={styles.rule} />
 
@@ -538,106 +588,59 @@ function OverviewTab({
 }
 
 /* 평가 — 없으면 줄표 대신 행동을 둔다 */
-function EvalRow({
-  detail, applicationId, onScored, startOpen = false,
-}: {
-  detail: ApplicationDetail
-  applicationId: number
-  onScored: () => void
-  /* 목록에서 [평가] 를 눌러 들어왔는가 */
-  startOpen?: boolean
-}) {
-  const [open, setOpen] = useState(startOpen)
-  const [score, setScore] = useState(0)
-  const [comment, setComment] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState<string | null>(null)
-
-  async function submit() {
-    if (score < 1) return
-    setBusy(true); setErr(null)
-    try {
-      await evaluations.create(applicationId, score, comment.trim() || undefined)
-      setOpen(false); setScore(0); setComment('')
-      onScored()
-    } catch (e) {
-      setErr(e instanceof ApiError ? e.message : '평가를 남기지 못했습니다')
-    } finally {
-      setBusy(false)
-    }
-  }
+/* 상세 화면 상단의 평가 자리.
+   담당자 별점(1~5) 을 매기던 EvalRow 를 걷어내고 종합 평가 상세 페이지로 보낸다.
+   자동 심사(doc_score) 와 면접 점수·인적성이 이미 종합 판단 재료를 낸다 —
+   담당자 별점은 중복이었고 편향 유발 요인이었다. 종합 평가 페이지에서
+   서류·인적성·면접 세 갈래 근거를 함께 본다 (Summary.tsx · 사이드바 "종합 평가"). */
+/* 자동 판정 요약 · 서류·면접 점수와 종합 평점을 상단에 보이고, 아래에 종합 평가 상세 링크.
+   detail.doc_score · interview_ai_score 는 각 100점 · final_score 는 가중 합계 (ADR-0034).
+   final_score 는 서류·면접 둘 다 있어야 값이 있고, 없으면 자동 판정 대기 상태.
+   담당자가 상단에서 총 점수를 한 눈에 보고, 더 자세히 보려면 링크로 종합 평가 페이지 이동. */
+function SummaryLinkRow({ detail, applicationId }: { detail: ApplicationDetail; applicationId: number }) {
+  const docScore = detail.doc_score
+  const interviewScore = detail.interview_ai_score
+  const finalScore = detail.final_score
+  const hasAnyScore = docScore != null || interviewScore != null || finalScore != null
 
   return (
-    <>
-      <div className={styles.evalRow}>
-        {detail.avg_score === null ? (
-          <span className={styles.state}>아직 평가 없음</span>
-        ) : (
-          <span className={styles.stars}>
-            <Stars value={detail.avg_score} />
-            <span className={styles.score}>
-              {detail.avg_score.toFixed(1)}
-              <small> / 5.0 · 평가 {detail.eval_count ?? 0}명</small>
+    <div className={styles.summaryPanel}>
+      {hasAnyScore ? (
+        <div className={styles.summaryScores}>
+          {docScore != null && (
+            <span className={styles.scoreChip}>
+              <span className={styles.scoreChipLabel}>서류</span>
+              <span className={styles.scoreChipValue}>{docScore}</span>
             </span>
-          </span>
-        )}
-        <button type="button" className={styles.btnSm} onClick={() => setOpen(!open)}>
-          {open ? '닫기' : '평가하기'}
-        </button>
-      </div>
-
-      {open && (
-        <div className={styles.reasonBox}>
-          {/* 점수는 라디오다 — 하나만 고른다. 고른 것은 채워서 표시한다 */}
-          <div className={styles.scoreRow} role="radiogroup" aria-label="점수">
-            <span className={styles.scoreLabel}>점수</span>
-            {[1, 2, 3, 4, 5].map((n) => (
-              <button
-                key={n}
-                type="button"
-                role="radio"
-                aria-checked={score === n}
-                aria-label={`${n}점`}
-                className={`${styles.scoreBtn} ${score === n ? styles.scoreOn : ''}`}
-                disabled={busy}
-                onClick={() => setScore(n)}
-              >
-                {n}
-              </button>
-            ))}
-          </div>
-          <textarea
-            className={styles.input}
-            rows={2}
-            aria-label="평가 의견"
-            placeholder="의견 (선택)"
-            value={comment}
-            disabled={busy}
-            onChange={(e) => setComment(e.target.value)}
-          />
-          <div className={styles.actions}>
-            <button type="button" className={styles.btnStage} disabled={busy || score < 1} onClick={() => void submit()}>
-              {busy ? '남기는 중…' : '등록'}
-            </button>
-          </div>
-          {err && <p className={styles.err} role="alert">{err}</p>}
+          )}
+          {interviewScore != null && (
+            <span className={styles.scoreChip}>
+              <span className={styles.scoreChipLabel}>면접</span>
+              <span className={styles.scoreChipValue}>{interviewScore}</span>
+            </span>
+          )}
+          {finalScore != null && (
+            <span className={styles.scoreChipFinal}>
+              <span className={styles.scoreChipLabel}>종합</span>
+              <span className={styles.scoreChipValue}>{Math.round(finalScore)}</span>
+            </span>
+          )}
+          {finalScore != null && detail.grade && (
+            <span className={styles.gradeBadge}>{detail.grade}</span>
+          )}
         </div>
+      ) : (
+        <span className={styles.state}>서류·인적성·면접 자동 판정 대기</span>
       )}
-    </>
+      <Link to={`/summary/${applicationId}`} className={styles.summaryDetailLink}>
+        종합 평가 자세히 보기 →
+      </Link>
+    </div>
   )
 }
 
-function Stars({ value }: { value: number }) {
-  return (
-    <span aria-hidden="true" className={styles.stars}>
-      {[1, 2, 3, 4, 5].map((n) => (
-        <svg key={n} viewBox="0 0 24 24" fill={n <= Math.round(value) ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth={n <= Math.round(value) ? 0 : 1.6} opacity={n <= Math.round(value) ? 1 : .35}>
-          <path d="M12 2l3 6.6 7 .8-5.2 4.8 1.4 7L12 17.8 5.8 21.2l1.4-7L2 9.4l7-.8z" />
-        </svg>
-      ))}
-    </span>
-  )
-}
+/* Stars 컴포넌트(별점 표시) 는 EvalRow 전용이었고 다른 참조 없음 · 함께 삭제.
+   지원자 목록(Applicants·PostingApplicants·Kanban) 의 avg_score 표시는 별건 · 그대로. */
 
 /* 연락처 + 메일 — 단계와 무관한 메일은 주소가 있는 자리에서 보낸다.
    단계 메일은 단계 변경 드롭다운이 맡는다(둘의 역할이 갈린다). */
@@ -784,12 +787,11 @@ interface Props {
   applicationId: number
   onClose: () => void
   onChanged: () => void
-  /* 목록의 [평가] 를 눌러 들어온 경우. 개요 탭의 평가 입력을 펼친 채로 연다 —
-     새 모달을 만들지 않는다(입력 자리는 여기 하나뿐이어야 한다) */
-  startRating?: boolean
+  /* startRating 은 평가하기 폼을 펼친 채로 여는 flag 였다. 평가 폼이 종합 평가 링크로
+     대체되면서 의미 없어짐 · 남겨두면 호출부가 계속 넘긴다. 완전 제거. */
 }
 
-export default function ApplicantPanel({ applicationId, onClose, onChanged, startRating = false }: Props) {
+export default function ApplicantPanel({ applicationId, onClose, onChanged }: Props) {
   const [detail, setDetail] = useState<ApplicationDetail | null>(null)
   const [noteList, setNoteList] = useState<Note[] | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -913,8 +915,13 @@ export default function ApplicantPanel({ applicationId, onClose, onChanged, star
               <div className={styles.pwho}>
                 <div className={styles.pnameRow}>
                   <span className={styles.pname}>{detail.name}</span>
+                  {/* 불합격이면 **어디서** 떨어졌는지까지 적는다 —
+                      「서류에서 떨어진 사람」과 「최종에서 떨어진 사람」은
+                      담당자에게 완전히 다른 사람이다 (2026-09-17) */}
                   <span className={`${styles.stageBadge} ${styles[`tone_${detail.current_stage}`] ?? ''}`}>
-                    {STAGE_LABEL[detail.current_stage] ?? detail.current_stage}
+                    {detail.current_stage === 'rejected'
+                      ? rejectedLabel(detail.stage_history ?? [])
+                      : (STAGE_LABEL[detail.current_stage] ?? detail.current_stage)}
                   </span>
                 </div>
                 <p className={styles.pmeta}>{headLine(detail)}</p>
@@ -926,6 +933,7 @@ export default function ApplicantPanel({ applicationId, onClose, onChanged, star
                  effect 로 초기화하면 렌더가 한 번 더 돈다 — key 로 새로 만든다 */
               key={detail.current_stage}
               current={detail.current_stage}
+              history={detail.stage_history ?? []}
               busy={saving}
               error={actionError}
               onCommit={(to, why) => void changeStage(to, why)}
@@ -959,7 +967,6 @@ export default function ApplicantPanel({ applicationId, onClose, onChanged, star
               <OverviewTab
                 detail={detail}
                 applicationId={applicationId}
-                startRating={startRating}
                 onScored={reloadDetail}
                 onMailSent={() => setMailHistoryKey((k) => k + 1)}
               />

@@ -307,8 +307,12 @@ def decide_document(db: Session, application: Application, now: datetime | None 
         or application.decision_source == "human"
         or application.current_stage != "applied"
     ):
-        application.doc_decision = "hold"
-        db.commit()
+        # 이미 판정이 난 지원자(합격·불합격·수동 보류 — 시각이 있다)의 표시는 덮지 않는다.
+        # 요약을 다시 만들며 이 함수를 또 부르면 "통과" 배지가 "보류"로 바뀌었다
+        # (2026-09-17 발견 — #294 재생성 계획 검토 중). 돌려주는 값만 hold 다.
+        if application.doc_decided_at is None:
+            application.doc_decision = "hold"
+            db.commit()
         return "hold"
 
     if posting.screening_mode != "auto":

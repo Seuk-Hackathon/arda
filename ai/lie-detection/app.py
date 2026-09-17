@@ -35,7 +35,6 @@ from interview_ws import (
     InterviewSession,
     LiveScorer,
     _SpeechDetector,
-    face_row_of_jpeg,
     fetch_questions,
     fetch_reference,
     fetch_state,
@@ -464,7 +463,7 @@ def _frame_tally(session: InterviewSession) -> str:
     s = session.frame_stats
     return (
         f"프레임 recv={s['recv']} 버림={s['dropped_busy']} "
-        f"분석={s['in']} 얼굴={s['face']}"
+        f"분석={s['in']} 얼굴={s['face']} 담당자중복버림={s.get('dropped_recruiter', 0)}"
     )
 
 
@@ -481,6 +480,18 @@ async def _on_binary(
         return
 
     if kind == KIND_VIDEO:
+        # **얼굴 출처는 한 면접에 하나** (2026-09-17, 민아님 제안 (가)). 웹 지원자
+        # 면접에서는 지원자 페이지와 담당자 방이 같은 얼굴을 둘 다 보낸다 — 받으면
+        # `recv` 가 두 배가 되고 같은 순간이 판정 창에 두 번 들어간다. 지원자 것이
+        # 원본이라 그쪽이 살아 있으면 담당자 것은 버리고, 따로 센다(`recv` 에 안 든다).
+        now = time.monotonic()
+        if not is_recruiter:
+            session.applicant_video_at = now
+        elif now - session.applicant_video_at < iw.APPLICANT_VIDEO_FRESH_SEC:
+            iw.FRAME_STATS["dropped_recruiter"] += 1
+            session.frame_stats["dropped_recruiter"] += 1
+            return
+
         # **받은 즉시 센다.** `add_frame` 안에서 세면 아래 `face_busy` 로 버린 것이
         # "안 온 것"과 구별되지 않는다 — 2026-09-10 실측에서 `in=0` 을 보고도
         # 앱이 안 보낸 것인지 서버가 버린 것인지 갈리지 않았다.

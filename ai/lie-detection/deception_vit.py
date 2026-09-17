@@ -11,7 +11,6 @@ ViT(google/vit-base-patch16-224) 를 HuggingFace 에서 받아 쓴다.
 from __future__ import annotations
 
 import logging
-import os
 
 import numpy as np
 

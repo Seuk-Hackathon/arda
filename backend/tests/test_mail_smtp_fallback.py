@@ -103,8 +103,59 @@ class TestFlushPending:
         with patch("app.shared.mail_smtp.send_message"):
             result = mail_smtp.flush_pending(db, after_min=10)
 
-        assert result == {"found": 1, "sent": 1}
+        assert result == {"found": 1, "sent": 1, "given_up": 0}
         assert log.status == "sent"
+
+    def test_여러_건을_한_회차에_모두_보낸다(self, db: Session, log: EmailLog, smtp_on):
+        """한 행씩 잠그고 보내는 반복이 첫 행에서 멈추지 않는다."""
+        old = datetime.now(UTC) - timedelta(minutes=30)
+        other = EmailLog(
+            application_id=log.application_id, to_email=log.to_email,
+            stage="custom", subject="안내", body="확정 본문",
+            status="queued", actor_kind="system", created_at=old,
+        )
+        log.created_at = old
+        db.add(other)
+        db.commit()
+
+        with patch("app.shared.mail_smtp.send_message") as sent:
+            result = mail_smtp.flush_pending(db, after_min=10)
+
+        assert result == {"found": 2, "sent": 2, "given_up": 0}
+        assert sent.call_count == 2
+        assert log.status == other.status == "sent"
+
+    def test_실패한_행은_같은_회차에_다시_집지_않는다(self, db: Session, log: EmailLog, smtp_on):
+        """실패하면 queued 로 남는다 — 같은 회차에 또 집으면 상한까지 연달아 두드린다."""
+        log.created_at = datetime.now(UTC) - timedelta(minutes=30)
+        db.commit()
+
+        with patch(
+            "app.shared.mail_smtp.send_message", side_effect=RuntimeError("SMTP 죽음")
+        ) as sent:
+            result = mail_smtp.flush_pending(db, after_min=10)
+
+        assert sent.call_count == 1
+        assert result == {"found": 1, "sent": 0, "given_up": 0}
+        assert log.status == "queued"
+        assert log.retry_count == 1
+
+    def test_상한만큼_실패하면_failed_로_접는다(self, db: Session, log: EmailLog, smtp_on):
+        """주소가 틀렸거나 계정이 잠긴 행을 몇 분마다 영원히 두드리지 않는다."""
+        log.created_at = datetime.now(UTC) - timedelta(minutes=30)
+        log.retry_count = mail_smtp.FLUSH_MAX_RETRY - 1
+        db.commit()
+
+        with patch("app.shared.mail_smtp.send_message", side_effect=RuntimeError("거절")):
+            result = mail_smtp.flush_pending(db, after_min=10)
+
+        assert result["given_up"] == 1
+        assert log.status == "failed"
+
+        # 접힌 뒤에는 다시 집지 않는다
+        with patch("app.shared.mail_smtp.send_message") as sent:
+            assert mail_smtp.flush_pending(db, after_min=10)["found"] == 0
+        sent.assert_not_called()
 
     def test_방금_생긴_것은_건드리지_않는다(self, db: Session, log: EmailLog, smtp_on):
         """n8n 이 정상이면 몇 초 안에 나간다 — 그 사이에 끼어들면 두 번 간다."""
@@ -123,6 +174,56 @@ class TestFlushPending:
         with patch("app.shared.mail_smtp.send_message") as sent:
             assert mail_smtp.flush_pending(db, after_min=10)["found"] == 0
         sent.assert_not_called()
+
+
+class TestFlushLoop:
+    """쓸어 담기를 API 가 스스로 돈다 (2026-09-17, 수택님 B1).
+
+    전에는 `python -m app.shared.mail_smtp` 를 사람이 쳐야 했다 — 사람이 n8n 장애를
+    모르는 동안은 아무도 안 보냈다.
+    """
+
+    def test_SMTP_설정이_없으면_띄우지_않는다(self, monkeypatch):
+        monkeypatch.setattr(mail_smtp, "SMTP_HOST", "")
+        assert mail_smtp.start_flush_loop() is None
+
+    def test_간격이_0이면_띄우지_않는다(self, monkeypatch, smtp_on):
+        monkeypatch.setattr(mail_smtp, "FLUSH_INTERVAL_MIN", 0)
+        assert mail_smtp.start_flush_loop() is None
+
+    def test_간격마다_쓸어_담고_멈추라면_멈춘다(self, monkeypatch, smtp_on):
+        import threading
+
+        monkeypatch.setattr(mail_smtp, "FLUSH_INTERVAL_MIN", 0.001)  # 0.06초
+        ran = threading.Event()
+        calls: list[int] = []
+
+        class _Db:
+            def __enter__(self):
+                return "db"
+
+            def __exit__(self, *exc):
+                return False
+
+        def fake_flush(db):
+            calls.append(1)
+            if len(calls) == 1:
+                raise RuntimeError("한 회차 실패")  # 다음 회차는 돌아야 한다
+            ran.set()
+            return {}
+
+        monkeypatch.setattr("app.db.SessionLocal", lambda: _Db())
+        monkeypatch.setattr(mail_smtp, "flush_pending", fake_flush)
+
+        stop = mail_smtp.start_flush_loop()
+        assert stop is not None
+        try:
+            assert ran.wait(5), "두 번째 회차가 돌지 않았다"
+        finally:
+            stop.set()
+        n = len(calls)
+        threading.Event().wait(0.3)
+        assert len(calls) <= n + 1, "멈추라고 했는데 계속 돈다"
 
 
 class TestPublishFallback:
