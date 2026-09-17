@@ -168,6 +168,60 @@ class TestDecideDocument:
         assert screening.decide_document(db, application) == "hold"
 
 
+class TestDecideIfNeverDecided:
+    """요약 재생성 뒤 판정 — 한 번도 판정받지 못한 지원자만 (2026-09-17)."""
+
+    def test_처음_점수가_생긴_지원자는_판정한다(self, db, posting, application):
+        _score(application, 75)
+        assert screening.decide_if_never_decided(db, application) == "pass"
+        assert application.current_stage == "interview"
+        assert application.doc_decided_at is not None
+
+    def test_첫_요약이_부족으로_hold_였어도_점수가_생기면_판정한다(self, db, posting, application):
+        # 접수 때: 점수 없음 → hold, 시각은 안 남는다
+        assert screening.decide_document(db, application) == "hold"
+        assert application.doc_decided_at is None
+        # 재생성으로 점수가 생겼다
+        _score(application, 40)
+        assert screening.decide_if_never_decided(db, application) == "reject"
+        assert application.current_stage == "rejected"
+
+    def test_이미_판정된_지원자는_다시_판정하지_않는다(self, db, posting, application):
+        _score(application, 75)
+        screening.decide_document(db, application)
+        history_before = len(_history(db, application))
+        mails_before = len(db.scalars(select(EmailLog).where(EmailLog.application_id == application.id)).all())
+
+        _score(application, 20)  # 재생성으로 점수가 떨어져도
+        assert screening.decide_if_never_decided(db, application) is None
+        assert application.current_stage == "interview"
+        assert application.doc_decision == "pass"
+        assert len(_history(db, application)) == history_before
+        assert len(db.scalars(select(EmailLog).where(EmailLog.application_id == application.id)).all()) == mails_before
+
+    def test_수동_모드로_보류된_지원자도_건드리지_않는다(self, db, posting, application):
+        posting.screening_mode = "manual"
+        _score(application, 95)
+        screening.decide_document(db, application)  # 수동 hold 는 시각을 남긴다
+        posting.screening_mode = "auto"
+        assert screening.decide_if_never_decided(db, application) is None
+        assert application.current_stage == "applied"
+
+    @pytest.mark.parametrize("status", ["closed", "draft"])
+    def test_열린_공고가_아니면_판정하지_않는다(self, db, posting, application, status):
+        posting.status = status
+        _score(application, 95)
+        assert screening.decide_if_never_decided(db, application) is None
+        assert application.current_stage == "applied"
+        assert db.scalar(select(EmailLog).where(EmailLog.application_id == application.id)) is None
+
+    def test_사람이_옮긴_지원자는_hold(self, db, posting, application):
+        application.decision_source = "human"
+        _score(application, 95)
+        assert screening.decide_if_never_decided(db, application) == "hold"
+        assert application.current_stage == "applied"
+
+
 class TestInterviewerAutoAssign:
     def _pool(self, db, posting, users: list[User]) -> None:
         for u in users:
