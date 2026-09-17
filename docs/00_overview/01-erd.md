@@ -1,6 +1,7 @@
 # 01. 테이블 정의서 (ERD)
 
-> **상태: 확정 v2.5 · 2026-09-16** — v2.5: `email_logs.stage` 에 **`password_setup`** 허용(**alembic `0024`**). 비밀번호 설정 링크 메일은 어느 전형 단계에도 안 붙는 기능성 메일이라 `custom`(담당자가 직접 쓴 메일)과도 구별한다. **운영에서 실제로 막혔던 것** — 제약이 거부해 INSERT 가 실패했고 백그라운드라 요청은 202 로 끝나 아무도 몰랐다.
+> **상태: 확정 v2.6 · 2026-09-17** — v2.6: `email_logs.stage` 에 **`resume_missing`** 허용(**alembic `0025`**). 회사 통합 API 로 온 이력서 URL 을 받지 못했다고 지원자에게 알리는 기능성 메일([ADR-0037](../03_decision/0037-회사-통합-API.md) Phase B). 0024 와 같은 사고를 피하려고 코드와 같은 커밋에 넣었다.
+> v2.5 · 2026-09-16 — v2.5: `email_logs.stage` 에 **`password_setup`** 허용(**alembic `0024`**). 비밀번호 설정 링크 메일은 어느 전형 단계에도 안 붙는 기능성 메일이라 `custom`(담당자가 직접 쓴 메일)과도 구별한다. **운영에서 실제로 막혔던 것** — 제약이 거부해 INSERT 가 실패했고 백그라운드라 요청은 202 로 끝나 아무도 몰랐다.
 > v2.4 · 2026-09-16 — v2.4: 지원자 비밀번호 로그인 2테이블 `applicant_credentials`·`applicant_password_tokens` 추가 ([ADR-0033](../03_decision/0033-지원자-앱-로그인.md) 개정). 신규 테이블만 만들므로 기존 행 영향 없음. **alembic `0023`**.
 > v2.3 · 2026-09-11 — v2.3: `interview_findings.turn_id` 추가 — 서류 대조를 **답변마다** 만들어 그 답변에 붙인다(담당자 화상 방이 답변 밑에 띄운다). NULL 허용이라 기존 행 영향 없음. **alembic `0019`**. 같은 날 `interview_turns.answered_at`(**alembic `0018`**)도 들어갔다 — 표에만 반영돼 있던 것을 여기 함께 적는다.
 > v2.2 · 2026-09-10 — v2.2: **자동 심사**([ADR-0034](../03_decision/0034-에이전트-자동심사.md)). `job_postings.pass_threshold`·`screening_mode`, 신규 `posting_interviewers`(공고별 기본 면접관 풀), `applications.doc_score`·`doc_score_detail`·`doc_decision`·`doc_decided_at`·`decision_source`, `interview_sessions.ai_score`·`ai_score_detail`·`truth_samples`·`scored_at`, `company_profile.scoring_weights`·`talent_profile`. 전부 NULL 허용 또는 기본값이라 기존 행 영향 없음. **alembic `0016`**. 0013·0014 가 만든 `company_profile`·공고 상세 컬럼도 이 판에서 문서에 반영했다(코드가 먼저였다).
@@ -276,7 +277,7 @@ UNIQUE(job_posting_id, user_id).
 | id | bigint | PK | |
 | application_id | bigint | FK → applications.id, NOT NULL | |
 | to_email | varchar(255) | NOT NULL | |
-| stage | varchar(20) | NOT NULL | 어떤 단계 변경 건인지. 단계 5종 + **`custom`**(수동·에이전트 발송 — 단계 이동이 아니라서 표현할 값이 없다) + **`password_setup`**(2026-09-16 · 비밀번호 설정 링크. 기능성 메일이라 어느 단계에도 안 붙고, 사람이 쓴 `custom` 과도 구별한다). `applications.current_stage` 의 허용값은 그대로 5종이다 |
+| stage | varchar(20) | NOT NULL | 어떤 단계 변경 건인지. 단계 5종 + **`custom`**(수동·에이전트 발송 — 단계 이동이 아니라서 표현할 값이 없다) + **`password_setup`**(2026-09-16 · 비밀번호 설정 링크. 기능성 메일이라 어느 단계에도 안 붙고, 사람이 쓴 `custom` 과도 구별한다) + **`resume_missing`**(2026-09-17 · 통합 API 이력서 URL 을 못 받았다는 안내. 같은 부류). `applications.current_stage` 의 허용값은 그대로 5종이다 |
 | status | varchar(20) | NOT NULL, default `queued` | `queued` / `sent` / `failed` |
 | subject | text | | 확정 제목. **NULL 이면 발송 시점 렌더**(단계 자동 발송) |
 | body | text | | 확정 본문. 값이 있으면 워커가 렌더를 건너뛰고 그대로 보낸다 = **보낸 그대로의 기록**. 면접 안내는 발송 시점에야 라이브 일정 링크를 알 수 있어 미리 굳히지 않는다 |

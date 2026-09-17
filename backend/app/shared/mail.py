@@ -71,6 +71,41 @@ def render_password_setup(db, url: str) -> tuple[str, str]:
     }
     return fill(PASSWORD_SETUP_SUBJECT, values), fill(_PASSWORD_SETUP_BODY, values)
 
+
+# ── 이력서 누락 안내 (2026-09-17, ADR-0037 Phase B) ─────────────────────
+#
+# 회사 통합 API 로 온 지원서의 이력서 URL 을 받지 못했을 때 보낸다. 비밀번호 메일과
+# 같은 이유로 DB 템플릿을 타지 않는다 — 담당자가 말투를 고칠 자리가 아니다.
+# **회신을 권하지 않는다.** 시스템 메일에는 회신 주소가 없다.
+RESUME_MISSING_SUBJECT = "[{회사명}] {공고명} 지원서의 이력서 파일을 받지 못했습니다"
+
+_RESUME_MISSING_BODY = """안녕하세요, {지원자명}님.
+
+{회사명} {공고명} 포지션 지원서는 정상적으로 접수되었습니다.
+다만 함께 전달된 **이력서 파일을 받지 못했습니다.** 파일 링크가 만료되었거나,
+10MB를 넘거나, PDF·DOCX·HWP·HWPX 형식이 아닌 경우입니다.
+
+처음 지원하신 채용 페이지에서 이력서를 다시 제출해 주시거나, 해당 채용 담당자에게
+문의해 주세요. **이력서가 도착하기 전까지는 서류 심사가 진행되지 않습니다.**
+
+{서명}"""
+
+
+def render_resume_missing(db, app) -> tuple[str, str]:
+    """이력서 누락 안내의 (제목, 본문)."""
+    from app.hiring.company import name_for  # 순환 import 방지
+    from app.models import JobPosting
+
+    company_name = name_for(db)
+    posting = db.get(JobPosting, app.job_posting_id)
+    values = {
+        "회사명": company_name,
+        "공고명": posting.title if posting else "",
+        "지원자명": app.name,
+        "서명": build_signature("applied", "system", None, company_name=company_name),
+    }
+    return fill(RESUME_MISSING_SUBJECT, values), fill(_RESUME_MISSING_BODY, values)
+
 # 면접 일시도 스키마에 없다 (job_postings·applications 어디에도 컬럼이 없다).
 # 문구에서 그 자리는 비워 둘 수 없으므로 아래 문자열로 채우고, 컬럼이 생기면 바꾼다.
 INTERVIEW_AT_UNKNOWN = "별도 안내"

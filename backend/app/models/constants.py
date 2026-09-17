@@ -33,7 +33,10 @@ PUBLICATION_STATUSES = ("pending", "confirmed", "failed")
 # 지원자가 비밀번호 설정 링크를 받는 자리라 어느 전형 단계에도 안 붙는다. `custom`
 # 으로 적지 않는 이유는 그쪽이 "담당자가 직접 쓴 메일" 을 뜻해서다 — 통계에서
 # 사람이 쓴 것과 시스템이 보낸 링크가 섞인다.
-EMAIL_LOG_STAGES = STAGES + ("custom", "password_setup")
+#
+# `resume_missing` 도 같은 부류다 (2026-09-17, ADR-0037 Phase B). 회사 통합 API 로 온
+# 이력서 URL 을 받지 못했다고 지원자에게 알리는 메일.
+EMAIL_LOG_STAGES = STAGES + ("custom", "password_setup", "resume_missing")
 EMAIL_ACTOR_KINDS = ("human", "agent", "system")
 TEMPLATE_STAGES = ("applied", "interview", "accepted", "rejected")
 

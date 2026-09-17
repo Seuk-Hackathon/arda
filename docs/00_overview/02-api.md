@@ -381,7 +381,7 @@
 
 | 메서드 | 경로 | 설명 | 비고 |
 |---|---|---|---|
-| POST | /integrations/applications | 지원자 push | `Authorization: Bearer <회사 API key>`(bcrypt 대조). 본문 `{external_id, posting_token, applicant{name,email,phone,birth_date}, resume?{url|base64, filename?}, cover_letter?, source?}`. **같은 `external_id` 는 기존 지원서를 돌려준다**(`status: "duplicate"`). 201 `{arda_application_id, status, public_url}` · 401 키 없음/틀림 · 404 공고 없음 · 422 형식 |
+| POST | /integrations/applications | 지원자 push | `Authorization: Bearer <회사 API key>`(bcrypt 대조). 본문 `{external_id, posting_token, applicant{name,email,phone,birth_date}, resume?{url|base64, filename?}, cover_letter?, source?}`. **같은 `external_id` 는 기존 지원서를 돌려준다**(`status: "duplicate"`) — 단 **그 지원서에 이력서가 아직 없으면 이번에 온 이력서로 다시 받는다**(URL 실패 뒤 회사가 재전송하는 경로). `resume` 은 `url`·`base64` **정확히 하나**. **base64** 는 응답 전에 저장(10MB·pdf/docx/hwp/hwpx 를 **바이트로** 판정, 넘으면 413·형식 밖이면 422 — 지원서도 안 남는다). **url** 은 응답 뒤 백그라운드로 받는다(2026-09-17 Phase B): http·https·80·443·**공인 주소만**(내부·메타데이터 주소 차단), 리다이렉트 3회. 받으면 `files` 행 + 요약·앵커, **못 받으면 지원자에게 `resume_missing` 안내 메일만 보내고 요약·자동 심사는 돌리지 않는다.** 201 `{arda_application_id, status, public_url}` · 401 키 없음/틀림 · 404 공고 없음 · **409 같은 공고에 같은 이메일**(폼과 같음) · 413 · 422 형식 · 502 base64 를 S3 에 못 올림 |
 | POST | /integrations/keys | API key 발급 (임시 — 관리 UI 전) | **admin.** 2026-09-17 까지 **인증 없이 열려 있었다** — 스키마에서 숨긴 것(`include_in_schema=False`)을 막은 것으로 착각한 경우. 원본 키는 이 응답에서 한 번만 보이고 해시만 저장된다 |
 
 ## 백그라운드 (HTTP 아님)
