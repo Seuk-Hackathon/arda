@@ -14,9 +14,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from datetime import UTC, datetime, timedelta
 
+import anyio.from_thread
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
@@ -30,9 +32,19 @@ from app.models import Application, InterviewSession, User
 
 @pytest.fixture()
 def client(db: Session):
-    """공개 접근용. WebSocket 도 이걸로 연다."""
+    """공개 접근용. WebSocket 도 이걸로 연다.
+
+    **연결들이 이벤트 루프 하나를 같이 쓰게 한다** (2026-09-17). TestClient 는
+    기본으로 WebSocket 마다 루프(스레드)를 따로 띄우는데, 방은 지원자 연결의
+    루프에서 채용자 연결로 바로 쓴다. 채용자가 먼저 기다리고 있으면 그 루프가
+    깨어나지 못해 영영 멈춘다 — CI 에서 판정 중계 시험이 가끔 60초 시간초과로
+    깨진 원인이다. 운영(uvicorn)은 루프가 하나라 해당이 없다.
+    """
     app.dependency_overrides[get_db] = lambda: db
-    yield TestClient(app, raise_server_exceptions=False)
+    with anyio.from_thread.start_blocking_portal() as portal:
+        c = TestClient(app, raise_server_exceptions=False)
+        c.portal = portal  # lifespan 은 돌리지 않고 루프만 고정한다
+        yield c
     app.dependency_overrides.clear()
 
 
@@ -392,6 +404,38 @@ class TestVerdictRelay:
         assert got["truth_pct"] == 61.2
         assert got["lie_pct"] == 38.8
         assert got["from"] == "applicant"
+
+    @pytest.mark.timeout(10)
+    def test_채용자가_먼저_기다리고_있어도_받는다(
+        self, client, db: Session, application: Application, admin_user: User, monkeypatch
+    ):
+        """CI 에서 가끔 멈추던 순서를 매번 만든다 (2026-09-17, `client` 픽스처 주석).
+
+        서버가 늦게 보내게 해 채용자가 먼저 기다리게 한다. 연결마다 루프가
+        따로면 여기서 영영 멈춘다.
+        """
+        orig = interview_rtc._send
+
+        async def slow_send(ws, payload):
+            if payload.get("type") == "verdict":
+                await asyncio.sleep(0.3)
+            await orig(ws, payload)
+
+        monkeypatch.setattr(interview_rtc, "_send", slow_send)
+        s = _session(db, application, admin_user)
+        ticket = interview_rtc.issue_ticket(s.id, admin_user.id)
+
+        with client.websocket_connect(f"/api/v1/ws/interview/{s.token}/rtc") as applicant:
+            applicant.receive_json()
+            with client.websocket_connect(
+                f"/api/v1/ws/interview/{s.token}/rtc?ticket={ticket}"
+            ) as recruiter:
+                recruiter.receive_json()  # hello
+                applicant.receive_json()  # peer-join
+                applicant.send_json({"type": "verdict", "truth_pct": 1.0, "lie_pct": 99.0})
+                got = recruiter.receive_json()
+
+        assert got["type"] == "verdict"
 
 
 class TestVerdictFromWorker:
