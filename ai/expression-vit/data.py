@@ -27,7 +27,7 @@ INDEX = {name: i for i, name in enumerate(LABELS)}
 
 KOREAN = {
     "angry": "화남",
-    "disgust": "역겨움",
+    "disgust": "긴장",
     "fear": "무서움",
     "happy": "웃음",
     "neutral": "무표정",
