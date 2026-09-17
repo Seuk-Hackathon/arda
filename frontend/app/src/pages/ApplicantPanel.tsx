@@ -122,6 +122,38 @@ function nextStages(from: Stage): Stage[] {
 const PROGRESS_STAGES: Stage[] = ['applied', 'screening', 'interview', 'accepted']
 const PROGRESS_LABEL: Record<string, string> = { applied: '접수', screening: '서류', interview: '면접', accepted: '합격' }
 
+/* ── 어느 단계에서 떨어졌나 (2026-09-17, 멘토링 의견) ────────────
+   전에는 서류에서 떨어진 사람과 최종 면접에서 떨어진 사람이 **같은 화면**
+   이었다 — 둘 다 「불합격」 한 마디였다.
+
+   값은 `stage_history` 에 이미 있다. 상세 응답이 이력을 같이 주므로
+   서버를 더 부르지 않는다.
+
+   **뜻이 분명한 둘만 이름을 붙인다.** `applied → rejected` 도 규칙상
+   가능한데(`stages.py`: 불합격은 어느 단계에서든 진입 가능 — 아르 자동
+   심사가 접수 직후 떨어뜨리는 경우), **「접수 탈락」이라고 쓰지 않는다**:
+   접수는 성공한 것이라 말이 뒤집힌다. `accepted → rejected`(합격 후 철회)
+   도 실 케이스가 없어(2026-09-17 팀장 확인) 「불합격」으로 묶는다. */
+const REJECTED_LABEL: Record<string, string> = {
+  screening: '서류 탈락',
+  interview: '면접 탈락',
+}
+
+/** 불합격 직전 단계. 불합격이 아니거나 이력이 없으면 null */
+function rejectedFrom(history: StageHistoryItem[]): string | null {
+  /* 뒤에서 찾는다 — 되돌렸다 다시 떨어뜨린 경우 **마지막 판단**이 지금이다 */
+  for (let i = history.length - 1; i >= 0; i -= 1) {
+    if (history[i].to_stage === 'rejected') return history[i].from_stage
+  }
+  return null
+}
+
+/** 화면에 쓰는 한 마디. 단계를 모르면 그냥 「불합격」 */
+function rejectedLabel(history: StageHistoryItem[]): string {
+  const from = rejectedFrom(history)
+  return (from && REJECTED_LABEL[from]) ?? '불합격'
+}
+
 
 /* ── 탭 ──────────────────────────────────────────────────
    판단 재료(개요) · 도구(면접·메모) · 로그(이력) 를 가른다.
@@ -151,9 +183,11 @@ function headLine(d: ApplicationDetail): string {
    패널에서 제일 큰 요소를 누를 수 있게 하면, 메일까지 나가는 동작이
    스크롤하다 빗나간 손가락에 걸린다. 동작은 옆의 버튼 하나뿐이다. */
 function StageTrack({
-  current, editing = false, target = null, canPick, onPick,
+  current, history = [], editing = false, target = null, canPick, onPick,
 }: {
   current: Stage
+  /* 불합격이 **어디서** 났는지를 여기서 읽는다 (2026-09-17) */
+  history?: StageHistoryItem[]
   /* 고르는 상태인가. 평소에는 읽는 것이라 클릭을 받지 않는다 */
   editing?: boolean
   target?: Stage | null
@@ -161,15 +195,28 @@ function StageTrack({
   onPick?: (s: Stage) => void
 }) {
   const rejected = current === 'rejected'
-  const curIdx = PROGRESS_STAGES.indexOf(current)
+
+  /* **불합격은 진행 배열 밖이라 `indexOf` 가 -1 이다** (2026-09-17 고침).
+     그대로 두면 `i < curIdx` 가 늘 false 라 **지나온 칸이 하나도 안 밝았다**
+     — 서류에서 떨어진 사람과 최종에서 떨어진 사람이 같은 그림이었다.
+     떨어지기 직전 단계를 현재 칸으로 삼아 거기까지 밝힌다. */
+  const fellAt = rejected ? PROGRESS_STAGES.indexOf(rejectedFrom(history) as Stage) : -1
+  const curIdx = rejected ? fellAt : PROGRESS_STAGES.indexOf(current)
+
+  const endLabel = rejected ? rejectedLabel(history) : ''
   const label = rejected
-    ? '불합격'
+    ? endLabel
     : `진행 ${curIdx + 1} / ${PROGRESS_STAGES.length} · ${PROGRESS_LABEL[current] ?? current}`
 
   return (
     <div className={styles.track} role={editing ? undefined : 'img'} aria-label={editing ? undefined : label}>
       {PROGRESS_STAGES.map((s, i) => {
-        const cls = `${styles.trackStep} ${i < curIdx ? styles.trackDone : ''} ${i === curIdx ? (s === 'accepted' ? styles.trackAccepted : styles.trackNow) : ''}`
+        /* 불합격은 **떨어진 칸까지 지나온 것으로** 칠한다. 그 칸을 「진행 중」
+           으로 두면 끝난 사람이 아직 그 단계에 있는 것처럼 읽힌다 — 끝났다는
+           말은 옆의 「서류 탈락」 칸이 한다 */
+        const done = rejected ? i <= curIdx : i < curIdx
+        const now = !rejected && i === curIdx
+        const cls = `${styles.trackStep} ${done ? styles.trackDone : ''} ${now ? (s === 'accepted' ? styles.trackAccepted : styles.trackNow) : ''}`
 
         if (!editing) return <div key={s} className={cls}><b>{PROGRESS_LABEL[s]}</b></div>
 
@@ -195,7 +242,7 @@ function StageTrack({
           고르는 중에는 StageChanger 의 버튼이 이 자리를 대신한다 */}
       {rejected && !editing && (
         <div className={`${styles.trackStep} ${styles.trackRejected}`}>
-          <b>불합격</b>
+          <b>{endLabel}</b>
         </div>
       )}
     </div>
@@ -224,9 +271,11 @@ function StageTrack({
    어려운 동작에서 제일 하면 안 되는 일이다. 불합격은 진행의 끝이 아니라
    **종료**라 램프 밖에 두는 것이 의미상으로도 맞다(StageTrack 도 그렇게 그린다). */
 function StageChanger({
-  current, busy, error, onCommit,
+  current, history, busy, error, onCommit,
 }: {
   current: Stage
+  /* 진행 바가 「어디서 떨어졌나」를 읽는 데 쓴다 (2026-09-17) */
+  history: StageHistoryItem[]
   busy: boolean
   error: string | null
   onCommit: (to: Stage, reason: string) => void
@@ -287,6 +336,7 @@ function StageChanger({
       >
         <StageTrack
           current={current}
+          history={history}
           editing={editing}
           target={target}
           canPick={canPick}
@@ -913,8 +963,13 @@ export default function ApplicantPanel({ applicationId, onClose, onChanged, star
               <div className={styles.pwho}>
                 <div className={styles.pnameRow}>
                   <span className={styles.pname}>{detail.name}</span>
+                  {/* 불합격이면 **어디서** 떨어졌는지까지 적는다 —
+                      「서류에서 떨어진 사람」과 「최종에서 떨어진 사람」은
+                      담당자에게 완전히 다른 사람이다 (2026-09-17) */}
                   <span className={`${styles.stageBadge} ${styles[`tone_${detail.current_stage}`] ?? ''}`}>
-                    {STAGE_LABEL[detail.current_stage] ?? detail.current_stage}
+                    {detail.current_stage === 'rejected'
+                      ? rejectedLabel(detail.stage_history ?? [])
+                      : (STAGE_LABEL[detail.current_stage] ?? detail.current_stage)}
                   </span>
                 </div>
                 <p className={styles.pmeta}>{headLine(detail)}</p>
@@ -926,6 +981,7 @@ export default function ApplicantPanel({ applicationId, onClose, onChanged, star
                  effect 로 초기화하면 렌더가 한 번 더 돈다 — key 로 새로 만든다 */
               key={detail.current_stage}
               current={detail.current_stage}
+              history={detail.stage_history ?? []}
               busy={saving}
               error={actionError}
               onCommit={(to, why) => void changeStage(to, why)}
