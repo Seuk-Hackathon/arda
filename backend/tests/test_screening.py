@@ -168,6 +168,29 @@ class TestDecideDocument:
         assert screening.decide_document(db, application) == "hold"
 
 
+class TestDecideAgainKeepsLabel:
+    """판정이 난 지원자에게 decide_document 를 다시 불러도 표시가 안 바뀐다 (2026-09-17)."""
+
+    def test_통과한_지원자를_다시_판정해도_통과로_남는다(self, db, posting, application):
+        _score(application, 75)
+        assert screening.decide_document(db, application) == "pass"
+        _score(application, 20)  # 재생성으로 점수가 바뀌어도
+        assert screening.decide_document(db, application) == "hold"
+        assert application.doc_decision == "pass"
+        assert application.current_stage == "interview"
+
+    def test_불합격한_지원자도_불합격으로_남는다(self, db, posting, application):
+        _score(application, 30)
+        assert screening.decide_document(db, application) == "reject"
+        assert screening.decide_document(db, application) == "hold"
+        assert application.doc_decision == "reject"
+
+    def test_점수가_없어_보류된_지원자는_여전히_보류(self, db, posting, application):
+        assert screening.decide_document(db, application) == "hold"
+        assert application.doc_decision == "hold"
+        assert application.doc_decided_at is None
+
+
 class TestDecideIfNeverDecided:
     """요약 재생성 뒤 판정 — 한 번도 판정받지 못한 지원자만 (2026-09-17)."""
 
