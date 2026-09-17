@@ -56,11 +56,12 @@
 
 ### 0. 사전 (09-19 리허설 뒤 ~ 09-21)
 
-- [ ] 이 PR 머지 확인 — `scripts/apply_db_privileges.py` · `alembic/env.py` 가 운영 이미지에 들어가 있어야 한다. 롤이 비어 있으면 둘 다 **아무 동작도 바꾸지 않는다**
-- [ ] **배포 서비스가 어느 계정으로 도는지 확인** — `systemctl cat arda-deploy.service` 의 `User=`
-  - `ubuntu` 라면 **`.env.migrate` 를 `root:root 600` 으로 두면 배포 스크립트가 못 읽는다.** `ubuntu:ubuntu 600` 으로 둔다. `ubuntu` 는 docker 그룹이라 이미 root 와 같은 권한이다 — 막을 대상이 아니다
-  - `root` 라면 `root:root 600`
-- [ ] 비밀번호 관리자에 새 항목 두 개 자리: `arda-db-admin`(postgres) · `arda-db-app`(arda_app)
+- [x] 이 PR 머지 확인 — `scripts/apply_db_privileges.py` · `alembic/env.py` 가 운영 이미지에 들어가 있어야 한다(#295, 09-17 머지). 롤이 비어 있으면 둘 다 **아무 동작도 바꾸지 않는다**
+- [x] **배포 서비스 계정 = `ubuntu`** (09-17 suvisdev 확인, `systemctl cat arda-deploy.service`) → **`.env.migrate` 는 `ubuntu:ubuntu 600`**. `root:root` 로 두면 배포 스크립트가 못 읽어 멈춘다. `ubuntu` 는 docker 그룹이라 이미 root 와 같은 권한이다 — 막을 대상이 아니다
+- [ ] **CI 에 "모델과 이행 결과 비교" 스텝** — 적용 뒤에는 이행 누락이 곧 api 기동 실패다. 09-17 PR 로 추가(스크립트는 #292, CI 한 줄은 별도 PR)
+- [ ] 비밀번호 관리자에 새 항목 두 개: `arda-db-admin`(postgres) · `arda-db-app`(arda_app)
+  - **팀 공용 도구는 정해진 적이 없다**(09-17 확인). 각자 쓰는 비밀번호 관리자에 둔다 — ADR-0028 에 따라 관리자 비밀번호는 **woojeongalex(평시)·suvisdev(응급)** 두 사람만
+  - **전달은 채팅·md·커밋·이슈로 하지 않는다.** 당일 2단계에서 suvisdev 가 생성해 넣을 때 **화면을 같이 보며** 각자 자기 관리자에 저장한다
 
 ### 1. 백업 (09:00)
 
@@ -88,7 +89,7 @@ CREATE ROLE arda_app LOGIN PASSWORD '<새 앱 비밀번호>';
 ### 3. 이행용 파일
 
 ```bash
-install -m 600 -o <배포 서비스 계정> -g <같은 계정> /dev/null ~/arda/.env.migrate
+install -m 600 -o ubuntu -g ubuntu /dev/null ~/arda/.env.migrate   # 배포 서비스 계정 = ubuntu (09-17 확인)
 nano ~/arda/.env.migrate
 # 한 줄: MIGRATION_DATABASE_URL=postgresql+psycopg://postgres:<새 관리자 비밀번호>@db:5432/arda
 ```
