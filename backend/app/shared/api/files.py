@@ -295,12 +295,15 @@ def download_file(
 
     ascii_fallback = row.filename.encode("ascii", "replace").decode("ascii")
     utf8_encoded = urllib.parse.quote(row.filename, safe="")
+    # inline: 브라우저 내장 뷰어(PDF·이미지)로 새 탭에 미리보기. 다운로드는 일부러 안 준다 —
+    # 이력서는 블록체인 앵커(ADR-0028)로 원본 무결성이 걸려 있어 저장·수정 흐름이 없다.
+    # 뷰어가 지원 못 하는 형식(docx/hwp) 은 브라우저가 알아서 저장 다이얼로그로 폴백.
     return StreamingResponse(
         io.BytesIO(blob.content),
         media_type=row.content_type or "application/octet-stream",
         headers={
             "Content-Disposition": (
-                f'attachment; filename="{ascii_fallback}"; '
+                f'inline; filename="{ascii_fallback}"; '
                 f"filename*=UTF-8''{utf8_encoded}"
             ),
             "Content-Length": str(blob.size_bytes),
