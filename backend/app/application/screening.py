@@ -353,6 +353,33 @@ def decide_document(db: Session, application: Application, now: datetime | None 
     return application.doc_decision
 
 
+def decide_if_never_decided(db: Session, application: Application) -> str | None:
+    """요약 **재생성** 뒤에 부른다 — 한 번도 판정받지 못한 지원자만 판정한다 (2026-09-17).
+
+    접수 때는 요약 → `decide_document` 가 이어서 돈다. 재생성 버튼은 요약만 다시
+    만들고 판정은 안 돌렸는데, 그러면 **첫 요약이 실패했거나(`insufficient`·LLM 오류)
+    자동 심사 도입(09-10) 전에 들어온 지원자**는 점수가 생겨도 영영 판정을 못 받는다.
+
+    그렇다고 재생성마다 판정을 돌리면, 요약만 새로 보려던 담당자가 단계 이동과 면접관
+    배정·메일까지 일으킨다. 그래서 여기서만 연다:
+
+    - `doc_decided_at` 이 비었다 — 판정이 실제로 난 적이 없다. 점수가 없어 `hold` 로만
+      적힌 경우도 여기에 든다(그 경로는 시각을 안 남긴다). 수동 모드 `hold`·합격·불합격은
+      시각이 있어 빠진다
+    - 공고가 `open` 이다 — 마감된 공고의 지원자를 지금 면접으로 올리면 일정 제안·메일이
+      끝난 채용에 나간다
+    - 나머지(사람이 옮김·`applied` 아님·점수 없음)는 `decide_document` 가 이미 거른다
+
+    판정하지 않으면 None.
+    """
+    if application.doc_decided_at is not None:
+        return None
+    posting = PgHiringRepository(db).get_posting(application.job_posting_id)
+    if posting is None or posting.status != "open":
+        return None
+    return decide_document(db, application)
+
+
 def send_pending_rejections(
     db: Session,
     posting_id: int,
