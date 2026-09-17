@@ -375,6 +375,15 @@
 
 점수 규칙(원본은 [N1 지시서](../02_tasks/N1-자동심사-파이프라인.md)): 서류 = 요건·우대·인재상 가중 평균 → `applications.doc_score` · 임계(`job_postings.pass_threshold`) 이상이면 아르가 `applied→screening→interview`, 미만이면 `→rejected`(이력 `changed_by` NULL + 점수 사유, 메일은 `send-rejections` 로 일괄) · 면접 = 답변 대조 + 진위 일관성 → `interview_sessions.ai_score` · 최종 = 서류×w + 면접×w → 상세의 `final_score`·`grade`. 사람이 단계를 옮기면 `decision_source=human` 이 되어 그 뒤 자동은 손대지 않는다. `accepted` 는 사람만.
 
+## 회사 통합 (ADR-0037)
+
+회사 백엔드가 서버 대 서버로 지원자를 밀어 넣는 경로. **사람 로그인(JWT)이 아니라 회사 API key 로 인증한다.** 2026-09-17 까지 이 절이 없었다(Phase A 누락).
+
+| 메서드 | 경로 | 설명 | 비고 |
+|---|---|---|---|
+| POST | /integrations/applications | 지원자 push | `Authorization: Bearer <회사 API key>`(bcrypt 대조). 본문 `{external_id, posting_token, applicant{name,email,phone,birth_date}, resume?{url|base64, filename?}, cover_letter?, source?}`. **같은 `external_id` 는 기존 지원서를 돌려준다**(`status: "duplicate"`). 201 `{arda_application_id, status, public_url}` · 401 키 없음/틀림 · 404 공고 없음 · 422 형식 |
+| POST | /integrations/keys | API key 발급 (임시 — 관리 UI 전) | **admin.** 2026-09-17 까지 **인증 없이 열려 있었다** — 스키마에서 숨긴 것(`include_in_schema=False`)을 막은 것으로 착각한 경우. 원본 키는 이 응답에서 한 번만 보이고 해시만 저장된다 |
+
 ## 백그라운드 (HTTP 아님)
 
 - **메일 워커** (G2·G3): SQS 폴링 → SES 발송 → `email_logs.status` 갱신, 실패 시 재시도

@@ -194,3 +194,49 @@ def _valid_payload(
         "cover_letter": "저는 백엔드 개발자입니다.",
         "source": "integration",
     }
+
+
+class TestIssueKey:
+    """키 발급은 admin 전용 (2026-09-17 — 운영에서 인증 없이 열려 있었다)."""
+
+    def _headers(self, user: User) -> dict:
+        from app.security import create_access_token
+
+        return {"Authorization": f"Bearer {create_access_token(user.id, user.role)}"}
+
+    def test_토큰_없으면_401_이고_키가_안_생긴다(self, client, db, company):
+        before = db.query(IntegrationClient).count()
+        r = client.post(
+            "/api/v1/integrations/keys", json={"company_id": company.id, "name": "x"}
+        )
+        assert r.status_code == 401
+        assert db.query(IntegrationClient).count() == before
+
+    def test_member_는_403(self, client, db, company, member_user):
+        before = db.query(IntegrationClient).count()
+        r = client.post(
+            "/api/v1/integrations/keys",
+            headers=self._headers(member_user),
+            json={"company_id": company.id, "name": "x"},
+        )
+        assert r.status_code == 403
+        assert db.query(IntegrationClient).count() == before
+
+    def test_admin_은_발급되고_그_키로_접수된다(self, client, db, company, admin_user, posting):
+        r = client.post(
+            "/api/v1/integrations/keys",
+            headers=self._headers(admin_user),
+            json={"company_id": company.id, "name": "Workday"},
+        )
+        assert r.status_code == 201
+        raw = r.json()["api_key"]
+        # 원본은 저장하지 않는다 — 해시만
+        row = db.get(IntegrationClient, r.json()["client_id"])
+        assert row.api_key_hash != raw
+
+        r2 = client.post(
+            "/api/v1/integrations/applications",
+            headers={"Authorization": f"Bearer {raw}"},
+            json=_valid_payload(posting.public_token, external_id="ext-key-1"),
+        )
+        assert r2.status_code == 201

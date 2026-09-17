@@ -31,7 +31,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.models import Application, IntegrationClient, JobPosting
+from app.deps import require_roles
+from app.models import Application, IntegrationClient, JobPosting, User
 from app.shared import s3
 
 logger = logging.getLogger(__name__)
@@ -278,14 +279,20 @@ def _new_api_key() -> tuple[str, str]:
     "/keys",
     response_model=IssueKeyResponse,
     status_code=http.HTTP_201_CREATED,
-    # 관리자 인증은 Phase B 에서. 지금은 이 라우트 자체를 배포 후 삭제 or
-    # feature flag 뒤에 두는 것 권장.
     include_in_schema=False,
 )
 def issue_key(
-    payload: IssueKeyRequest, db: Session = Depends(get_db)
+    payload: IssueKeyRequest,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_roles("admin")),
 ) -> IssueKeyResponse:
-    """새 API key 발급. 관리 UI 완성 전 임시 endpoint."""
+    """새 API key 발급. 관리 UI 완성 전 임시 endpoint — **admin 전용**.
+
+    2026-09-17 까지 인증이 없었다. `include_in_schema=False` 는 문서에서 숨길 뿐
+    막지 않는다 — 운영에서 토큰 없이 POST 하면 401 이 아니라 422(본문 검증)까지
+    들어갔다. 본문만 맞추면 누구든 키를 받아 지원자를 밀어 넣을 수 있었고, 그
+    지원자마다 요약·자동 심사(LLM)가 돈다.
+    """
     raw, prefix = _new_api_key()
     hashed = bcrypt.hashpw(raw.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
     row = IntegrationClient(
@@ -296,7 +303,9 @@ def issue_key(
     )
     db.add(row)
     db.commit()
-    logger.info("API key 발급 · client=%s prefix=%s", row.id, prefix)
+    logger.info(
+        "API key 발급 · client=%s prefix=%s by=%s", row.id, prefix, admin.id
+    )
     # 원본 key 는 이 응답 이후 다시 볼 수 없다 (해시만 저장).
     return IssueKeyResponse(api_key=raw, api_key_prefix=prefix, client_id=row.id)
 
