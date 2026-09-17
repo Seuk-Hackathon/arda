@@ -549,7 +549,10 @@ class InterviewSession:
         # 안 닫아도(앱이 마이크를 놓지 않거나 웹 탭을 열어 두면) 여기서부터는 더
         # 듣지 않는다 (2026-09-16, app.py `_close`·`_finished_elsewhere`).
         self.done = False
-        self.last_done_check = 0.0
+        # "한 번도 안 물어봤다". 0.0 으로 두면 `time.monotonic()`(부팅 후 초)이 60 보다
+        # 작은 기계 — 막 켜진 WSL·컨테이너 호스트 — 에서 첫 확인이 1분 밀린다
+        # (2026-09-17, 테스트가 가끔 깨진 원인).
+        self.last_done_check = float("-inf")
         # 이 면접의 프레임이 몇 도 누워 있는가. **처음 얼굴을 찾을 때 정해진다**
         # (`face_row_search`). None 이면 아직 안 정해진 것이고, 그동안만 네 방향을
         # 뒤진다. 각도가 굳혀진 뒤 5초 이상 얼굴을 못 찾으면 None 으로 되돌려
