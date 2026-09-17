@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.main import app
-from app.models import Application, File, FileBlob, JobPosting, User
+from app.models import Application, File, FileBlob, User
 from app.security import create_access_token, hash_password
 
 
