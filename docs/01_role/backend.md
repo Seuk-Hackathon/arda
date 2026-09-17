@@ -35,7 +35,7 @@
 
 ## 3. 인터페이스 계약
 
-**제공** — [02-api.md](../00_overview/02-api.md)의 REST 전부. 상세는 Swagger(`/docs`)가 진실. **엔드포인트 추가·변경은 02-api.md 갱신을 같은 커밋에 포함하고 사후 공지한다** (2026-08-28 개정 — 승인 절차 없음). 소비자: 프론트(cloverky)·앱(minahdev)·에이전트(suvisdev).
+**제공** — [02-api.md](../00_overview/02-api.md)의 REST 전부. 상세는 Swagger(`/docs`)가 진실. **엔드포인트 추가·변경은 02-api.md 갱신을 같은 커밋에 포함하고 사후 공지한다** (2026-08-28 개정 — 승인 절차 없음). 소비자: 프론트·앱(minahdev)·에이전트(cloverky) — 09-04 재배정 반영.
 
 **의존**
 
@@ -159,7 +159,7 @@
 | 온프레미스 서버 `alembic current` · `applicant_credentials` 유무 | 인프라(suvisdev) | #283 — 옛 번호로 `file_blobs` 를 먼저 돌렸다면 비밀번호 로그인 표가 빠져 있다 |
 | `STT_BACKEND` 빈 값을 두 서비스가 반대로 읽는다 — 실시간 쪽 변수 분리 제안 | ai/(suvisdev) | 09-16 사고 원인. 수택님 답신에 제안함 |
 | 로컬 전사 상한 시계가 대기 시간을 포함 | ai/(suvisdev) | ADR-0038 「남는 일」 |
-| 아르가 「서류 단계로 되돌려줘」에 확인 카드 대신 글로 되묻는다 | 에이전트(suvisdev) | 09-17 원가 재측정 중 발견 — 안전 문제 아님 |
+| 아르가 「서류 단계로 되돌려줘」에 확인 카드 대신 글로 되묻는다 | 에이전트(cloverky) | 09-17 원가 재측정 중 발견 — 안전 문제 아님 |
 | 발표 §1 「결정은 사람」 멘트 → ADR-0034 에 맞추기 | 총괄(suvisdev) | 발표-소주제4-대본 09-17 개정 |
 | CI 가 `ai/`·`mobile/` 테스트를 안 돌린다 | 앱(minahdev) | [#254](https://github.com/Seuk-Team/Arda/issues/254) |
 | 앱 얼굴 프레임 오류가 조용히 사라진다 | 앱(minahdev) | [#260](https://github.com/Seuk-Team/Arda/issues/260) |
