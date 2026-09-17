@@ -245,10 +245,10 @@ def _fill_structured_fields(
 
     prompt = (
         "다음은 지원자 이력서 내용이다. 아래 JSON 형식으로 정보를 추출하라.\n"
-        "없는 정보는 null로 둔다. career_years는 총 경력 연수(정수, 신입/없으면 0).\n\n"
+        "없는 정보는 null로 둔다. career_years는 총 경력 연수(정수). 신입이 명확하면 0, 기간을 셀 수 없으면 null.\n\n"
         f"이력서:\n{resume_text[:3000]}\n\n"
         "JSON만 출력:\n"
-        '{"education": "최종학력 문자열 또는 null", "career_years": 0, "skills": ["스킬1"]}'
+        '{"education": "최종학력 문자열 또는 null", "career_years": null, "skills": ["스킬1"]}'
     )
     try:
         raw = backend.complete(prompt=prompt, max_tokens=300).text
