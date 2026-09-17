@@ -235,14 +235,47 @@ def _parse_json(
         return None
 
 
+def _fill_structured_fields(
+    db: Session, app: Application, backend, resume_text: str
+) -> None:
+    """이력서 텍스트에서 학력·경력·기술스택을 추출해 비어 있는 DB 필드만 채운다."""
+    needs_fill = not app.education or app.career_years is None or not app.skills
+    if not needs_fill or not resume_text.strip():
+        return
+
+    prompt = (
+        "다음은 지원자 이력서 내용이다. 아래 JSON 형식으로 정보를 추출하라.\n"
+        "없는 정보는 null로 둔다. career_years는 총 경력 연수(정수, 신입/없으면 0).\n\n"
+        f"이력서:\n{resume_text[:3000]}\n\n"
+        "JSON만 출력:\n"
+        '{"education": "최종학력 문자열 또는 null", "career_years": 0, "skills": ["스킬1"]}'
+    )
+    try:
+        raw = backend.complete(prompt=prompt, max_tokens=300).text
+        data = _parse_json(raw.strip(), "extract_fields", app.id)
+        if data is None:
+            return
+        if not app.education and data.get("education"):
+            app.education = str(data["education"])[:100]
+        if app.career_years is None and data.get("career_years") is not None:
+            try:
+                app.career_years = max(0, int(data["career_years"]))
+            except (TypeError, ValueError):
+                pass
+        if not app.skills and isinstance(data.get("skills"), list):
+            app.skills = [str(s) for s in data["skills"] if s][:20]
+        db.commit()
+        logger.info("구조화 필드 채움: application_id=%d", app.id)
+    except Exception:
+        logger.warning("구조화 필드 추출 실패: application_id=%d", app.id)
+
+
 def generate_summary(db: Session, application_id: int) -> str | None:
     """3단계 파이프라인으로 AI 요약을 생성하고 DB에 저장한다."""
     app = PgApplicationRepository(db).get(application_id)
     if app is None:
         logger.warning("요약 대상 없음: application_id=%d", application_id)
         return None
-
-    prompt_vars = _build_prompt_vars(db, app)
 
     from app.agent.prompts import render
 
@@ -253,6 +286,18 @@ def generate_summary(db: Session, application_id: int) -> str | None:
     if reason:
         logger.error(reason)
         return None
+
+    # 폼에서 학력·경력·기술스택을 입력하지 않은 경우 이력서 파일에서 추출
+    if not app.education or app.career_years is None or not app.skills:
+        from app.agent.extractor import extract_text
+        for f in app.files:
+            if f.kind == "resume":
+                resume_text = extract_text(f)
+                if resume_text:
+                    _fill_structured_fields(db, app, backend, resume_text)
+                break
+
+    prompt_vars = _build_prompt_vars(db, app)
 
     model_tag = backend.model_tag()
     total_input = 0
