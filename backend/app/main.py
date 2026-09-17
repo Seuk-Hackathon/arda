@@ -25,7 +25,7 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 #프로젝트 내부모듈
-from app.shared import mail
+from app.shared import mail, mail_smtp
 from app import models  # noqa: F401 — 테이블을 메타데이터에 등록하려면 import 가 필요하다
 from app.db import Base, engine, pgvector_ready
 from app.errors import ErrorCode
@@ -71,7 +71,14 @@ async def lifespan(app: FastAPI):
     # (--reload 개발 중에는 저장할 때마다 재기동한다). 이유는 mail.warm_up 참고.
     threading.Thread(target=mail.warm_up, daemon=True).start()
 
+    # n8n 이 웹훅은 받고 그 뒤 죽어 `queued` 로 남은 메일을 몇 분마다 SMTP 로 보낸다
+    # (2026-09-17). SMTP 설정이 없으면 띄우지 않는다 — app/shared/mail_smtp.py.
+    stop_mail_flush = mail_smtp.start_flush_loop()
+
     yield
+
+    if stop_mail_flush is not None:
+        stop_mail_flush.set()
 
 
 app = FastAPI(title="Arda ATS API", version="0.1.0", lifespan=lifespan)
