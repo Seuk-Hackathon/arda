@@ -158,16 +158,21 @@ function rejectedLabel(history: StageHistoryItem[]): string {
 
 
 /* ── 탭 ──────────────────────────────────────────────────
-   판단 재료(개요) · 도구(면접·메모) · 로그(이력) 를 가른다.
-   예전에는 열 개 섹션이 세로 한 줄에 같은 무게로 쌓여 있었다. */
+   판단 재료(개요) · 도구(면접) · 읽을 것(이력·메모) 순이다.
+   예전에는 열 개 섹션이 세로 한 줄에 같은 무게로 쌓여 있었다.
+
+   **메모가 제일 뒤다** (2026-09-17, 멘토링 의견). 앞의 셋은 「이 사람을
+   어떻게 할까」를 정하는 자리인데 메모는 정하고 난 뒤에 남기는 자리라,
+   가운데 끼어 있으면 지나가는 길목이 된다. 이력은 남이 뭘 했는지 보는
+   것이라 판단에 더 가깝다. */
 type TabKey = 'overview' | 'interview' | 'notes' | 'history'
 type AptitudeStatus = AptitudeDetail['status']
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: 'overview', label: '개요' },
   { key: 'interview', label: '면접' },
-  { key: 'notes', label: '메모' },
   { key: 'history', label: '이력' },
+  { key: 'notes', label: '메모' },
 ]
 
 /* 헤더 한 줄 요약 — 이름 아래에서 "누구인지" 를 한 번에 말한다.
@@ -1100,6 +1105,15 @@ export default function ApplicantPanel({ applicationId, onClose, onChanged }: Pr
                 )
             )}
 
+            {tab === 'history' && (
+              <HistoryTab
+                history={detail.stage_history ?? []}
+                applicationId={applicationId}
+                refreshKey={mailHistoryKey}
+                onFailed={setMailFailed}
+              />
+            )}
+
             {tab === 'notes' && (
               <NotesTab
                 notes={noteList}
@@ -1108,15 +1122,6 @@ export default function ApplicantPanel({ applicationId, onClose, onChanged }: Pr
                 error={actionError}
                 onDraft={setDraft}
                 onSubmit={addNote}
-              />
-            )}
-
-            {tab === 'history' && (
-              <HistoryTab
-                history={detail.stage_history ?? []}
-                applicationId={applicationId}
-                refreshKey={mailHistoryKey}
-                onFailed={setMailFailed}
               />
             )}
           </div>
