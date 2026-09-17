@@ -362,9 +362,14 @@ class TestFinishedSessionStopsScoring:
             return R()
 
     def _session(self):
-        s = srv.InterviewSession("tok-done")
-        s.last_done_check = 0.0
-        return s
+        # 새 세션 그대로 쓴다. 예전에는 `last_done_check = 0.0` 으로 덮었는데, 그러면
+        # 기계가 켜진 지 60초가 안 됐을 때 첫 확인이 건너뛰어져 가끔 깨졌다(2026-09-17).
+        return srv.InterviewSession("tok-done")
+
+    def test_막_켜진_기계에서도_첫_확인은_바로(self):
+        """부팅 후 0초여도 첫 확인은 간격에 걸리지 않는다."""
+        s = self._session()
+        assert 0.0 - s.last_done_check >= srv.DONE_CHECK_SEC
 
     def test_끝난_세션이면_멈춘다(self):
         s = self._session()
