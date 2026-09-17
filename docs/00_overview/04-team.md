@@ -59,6 +59,6 @@
 | minahdev | 앱 + 프론트엔드 | 같은 API로 웹·앱 두 클라이언트 — 클라이언트 추가에 서버 변경이 몇 줄이었는가 · 드래그 실패 시 낙관적 업데이트를 어떻게 롤백했는가 |
 | suvisdev | 인프라·총괄 | 자동 CD(main 머지 → 2분 폴링 배포)에 alembic 이행을 넣은 과정 · 서명 개인키를 서버 밖(GitHub Actions)으로 뺀 결정([ADR-0028](../03_decision/0028-제출물-무결성-앵커.md) Q2·Q3) · 근거 [07-deploy](07-deploy.md)·[ADR-0007](../03_decision/0007-도메인-오너제-전환.md)·[ADR-0025](../03_decision/0025-운영-권한-이관.md) |
 
-**발표 소주제 4번**(LLM 도구 호출 에이전트 + AI 원가 관측 ✅ / STT 면접 분석 📋 — [presentation-outline](../presentation-outline.md) §4)의 **내용 정리·근거 수치는 woojeongalex 가 맡는다.** 범위 판정과 원가 실측이 백엔드 쪽 근거에 걸려 있어서다([rag-범위-정리](../rag-범위-정리.md) — 09/01 이 담당으로 작성). **에이전트 도메인 오너십(`backend/app/agent/`)은 suvisdev 그대로다** — 4번 때문에 그 폴더를 건드리면 다른 도메인 규칙대로 커밋에 명시하고 채널에 공지한다.
+**발표 소주제 4번**(LLM 도구 호출 에이전트 + AI 원가 관측 ✅ / STT 면접 분석 📋 — [presentation-outline](../presentation-outline.md) §4)의 **내용 정리·근거 수치는 woojeongalex 가 맡는다.** 범위 판정과 원가 실측이 백엔드 쪽 근거에 걸려 있어서다([rag-범위-정리](../rag-범위-정리.md) — 09/01 이 담당으로 작성). **에이전트 도메인 오너십(`backend/app/agent/`)은 cloverky 다**(09-04 위 표 — 이 줄은 09-01 작성 당시 suvisdev 였다) — 4번 때문에 그 폴더를 건드리면 다른 도메인 규칙대로 커밋에 명시하고 채널에 공지한다.
 
 **전원 공통**: 자기 도메인의 문서화, 발표 자료 본인 파트.
