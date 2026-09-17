@@ -503,7 +503,7 @@ function OverviewTab({
 
   return (
     <>
-      <SummaryLinkRow applicationId={applicationId} />
+      <SummaryLinkRow detail={detail} applicationId={applicationId} />
 
       <hr className={styles.rule} />
 
@@ -593,12 +593,45 @@ function OverviewTab({
    자동 심사(doc_score) 와 면접 점수·인적성이 이미 종합 판단 재료를 낸다 —
    담당자 별점은 중복이었고 편향 유발 요인이었다. 종합 평가 페이지에서
    서류·인적성·면접 세 갈래 근거를 함께 본다 (Summary.tsx · 사이드바 "종합 평가"). */
-function SummaryLinkRow({ applicationId }: { applicationId: number }) {
+/* 자동 판정 요약 · 서류·면접 점수와 종합 평점을 상단에 보이고, 아래에 종합 평가 상세 링크.
+   detail.doc_score · interview_ai_score 는 각 100점 · final_score 는 가중 합계 (ADR-0034).
+   final_score 는 서류·면접 둘 다 있어야 값이 있고, 없으면 자동 판정 대기 상태.
+   담당자가 상단에서 총 점수를 한 눈에 보고, 더 자세히 보려면 링크로 종합 평가 페이지 이동. */
+function SummaryLinkRow({ detail, applicationId }: { detail: ApplicationDetail; applicationId: number }) {
+  const docScore = detail.doc_score
+  const interviewScore = detail.interview_ai_score
+  const finalScore = detail.final_score
+  const hasAnyScore = docScore != null || interviewScore != null || finalScore != null
+
   return (
-    <div className={styles.evalRow}>
-      <span className={styles.state}>서류·인적성·면접 자동 판정 결과</span>
-      <Link to={`/summary/${applicationId}`} className={styles.btnSm}>
-        종합 평가 보기 →
+    <div className={styles.summaryPanel}>
+      {hasAnyScore ? (
+        <div className={styles.summaryScores}>
+          {docScore != null && (
+            <span className={styles.scoreChip}>
+              <span className={styles.scoreChipLabel}>서류</span>
+              <span className={styles.scoreChipValue}>{docScore}</span>
+            </span>
+          )}
+          {interviewScore != null && (
+            <span className={styles.scoreChip}>
+              <span className={styles.scoreChipLabel}>면접</span>
+              <span className={styles.scoreChipValue}>{interviewScore}</span>
+            </span>
+          )}
+          {finalScore != null && (
+            <span className={styles.scoreChipFinal}>
+              <span className={styles.scoreChipLabel}>종합</span>
+              <span className={styles.scoreChipValue}>{Math.round(finalScore)}</span>
+              {detail.grade && <span className={styles.gradeBadge}>{detail.grade}</span>}
+            </span>
+          )}
+        </div>
+      ) : (
+        <span className={styles.state}>서류·인적성·면접 자동 판정 대기</span>
+      )}
+      <Link to={`/summary/${applicationId}`} className={styles.summaryDetailLink}>
+        종합 평가 자세히 보기 →
       </Link>
     </div>
   )
