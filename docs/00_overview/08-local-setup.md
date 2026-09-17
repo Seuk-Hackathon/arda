@@ -73,9 +73,19 @@ uv run alembic upgrade head   # 스키마 최신화 (1절의 '처음 한 번' �
 
 | 환경변수 | 기본 | 로컬로 돌리려면 | main 반영 |
 |---|---|---|---|
-| `STT_BACKEND` | `openai` | `faster_whisper` (`uv sync --extra local` 필요) | ✅ |
+| `STT_BACKEND` | 백엔드 `openai` (빈 값도) · **실시간 면접 서버는 빈 값이면 로컬** — 아래 | `faster_whisper` (`uv sync --extra local` 필요) | ✅ |
 | `AGENT_CHAT_BACKEND` | `anthropic` | `ollama` | ✅ |
 | `AGENT_SUMMARY_BACKEND` | `anthropic` | `ollama` | ✅ |
+
+**`STT_BACKEND` 는 두 곳이 다르게 읽는다** (2026-09-17 정리). 백엔드(`backend/app/agent/stt.py`)와 실시간 면접 서버(`ai/lie-detection/interview_ws.py`)가 **같은 `backend/.env`** 를 읽는다.
+
+| 값 | 백엔드 (업로드 답변·재전사·아르 음성) | 실시간 면접 서버 |
+|---|---|---|
+| 비어 있음 | **`openai`** — 백엔드 이미지에 로컬 모델이 없다 | **로컬** `STT_MODEL` (없으면 전사 꺼짐) |
+| `openai` | OpenAI API | OpenAI API (`OPENAI_API_KEY` 가 있어야. 없으면 로컬) |
+| `faster_whisper` | 로컬 (`--extra local`) | 로컬 `STT_MODEL` |
+
+로컬에서 실시간 면접을 돌릴 때 값을 비워 두면 **백엔드는 API 로, 실시간 서버는 CPU 로** 받아쓴다. 한쪽으로 맞추려면 값을 명시한다. 근거는 [ADR-0038](../03_decision/0038-실시간-전사-OpenAI-API.md) 「같은 변수, 두 해석」.
 
 셋 다 main 에 있다(2026-09-01 반영, 480 passed). 로컬로 돌리려면 Ollama 와 모델이 필요하다 — `ollama pull qwen3:4b`. 실측 속도·정확도는 [ADR-0024](../03_decision/0024-sLLM-로컬-모델-전략.md) 09-01 개정 절.
 

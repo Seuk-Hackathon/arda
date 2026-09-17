@@ -35,7 +35,6 @@ from interview_ws import (
     InterviewSession,
     LiveScorer,
     _SpeechDetector,
-    face_row_of_jpeg,
     fetch_questions,
     fetch_reference,
     fetch_state,

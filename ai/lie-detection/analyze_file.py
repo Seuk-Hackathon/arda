@@ -8,7 +8,6 @@
 
 import sys
 import pickle
-import numpy as np
 import warnings
 warnings.filterwarnings("ignore")
 
