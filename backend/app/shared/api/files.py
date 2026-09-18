@@ -36,6 +36,7 @@ from app.db import get_db
 from app.deps import get_current_user
 from app.models import File, FileBlob, User
 from app.shared.s3 import EXPIRES_IN, presign_get, presign_put
+from app.shared import s3 as _s3
 from app.schemas.file import (
     PresignDownloadResponse,
     PresignUploadRequest,
@@ -75,6 +76,57 @@ def _redeem_file_ticket(ticket: str, file_id: int) -> int | None:
     if fid != file_id or time.time() - at > _FILE_TICKET_TTL_SEC:
         return None
     return user_id
+
+
+def _api_base(request: Request) -> str:
+    """티켓 URL 의 절대 주소. `PUBLIC_API_BASE_URL` → `Cf-Visitor` → 요청 호스트 순
+    (아래 presign_download 머리말의 근거와 같다 — cloudflared→Caddy 는 http 로 와서
+    X-Forwarded-Proto 만 믿으면 https 페이지에서 mixed-content 로 막힌다)."""
+    base = os.getenv("PUBLIC_API_BASE_URL", "").rstrip("/")
+    if base:
+        return base
+    cf_visitor = request.headers.get("cf-visitor") or ""
+    scheme = (
+        request.headers.get("x-forwarded-proto")
+        or ("https" if '"scheme":"https"' in cf_visitor else request.url.scheme)
+    )
+    host = request.headers.get("host") or request.url.netloc
+    return f"{scheme}://{host}"
+
+
+# ── 업로드 티켓 (온프레미스: 브라우저→MinIO 직결 불가) ──────────────────
+# 브라우저는 `minio:9000`(컨테이너 내부 호스트) 에 못 닿는다. 그래서 presign-upload 가
+# S3 서명 대신 이 api 의 PUT URL 을 주고, 브라우저가 그리로 바이트를 올리면 서버가
+# MinIO 에 넣는다. s3.py 의 "본문은 서버를 안 지나간다" 원칙의 온프레미스 예외 —
+# read_object(무결성 앵커)가 이미 반대 방향으로 그 예외를 쓰고 있다.
+# 키·타입·크기는 티켓에 박혀 온다 — 클라이언트가 임의의 키에 임의 크기로 못 쓴다
+# (옛 presigned PUT 이 서명에 ContentLength 를 넣어 막던 것과 같은 목적).
+_UPLOAD_TICKET_TTL_SEC = EXPIRES_IN
+_UPLOAD_TICKETS: dict[str, tuple[str, str, int, float]] = {}  # ticket → (s3_key, ctype, size, at)
+
+
+def _issue_upload_ticket(s3_key: str, content_type: str, size_bytes: int) -> str:
+    now = time.time()
+    for t in [
+        t for t, (_, _, _, at) in _UPLOAD_TICKETS.items()
+        if now - at > _UPLOAD_TICKET_TTL_SEC
+    ]:
+        _UPLOAD_TICKETS.pop(t, None)
+    ticket = secrets.token_urlsafe(24)
+    _UPLOAD_TICKETS[ticket] = (s3_key, content_type, size_bytes, now)
+    return ticket
+
+
+def _redeem_upload_ticket(ticket: str) -> tuple[str, str, int] | None:
+    """쓰면 사라진다. (s3_key, content_type, size_bytes) 또는 None."""
+    entry = _UPLOAD_TICKETS.pop(ticket, None)
+    if entry is None:
+        return None
+    s3_key, content_type, size_bytes, at = entry
+    if time.time() - at > _UPLOAD_TICKET_TTL_SEC:
+        return None
+    return s3_key, content_type, size_bytes
+
 
 # 확장자로 쓸 수 있는 모양인지 먼저 본다 (경로 주입·빈 확장자 차단).
 _EXT = re.compile(r"^[a-z0-9]{1,10}$")
@@ -202,22 +254,59 @@ def _build_key(ext: str, kind: str) -> str:
     "/public/files/presign-upload",
     response_model=PresignUploadResponse,
 )
-def presign_upload(body: PresignUploadRequest):
-    """업로드용 presigned URL 발급 (F1). **공개** — 지원자는 로그인하지 않는다.
+def presign_upload(body: PresignUploadRequest, request: Request):
+    """업로드용 URL 발급 (F1). **공개** — 지원자는 로그인하지 않는다.
 
     발급 시점에는 아직 지원서가 없으므로 `files` 행을 만들지 않는다
     (`files.application_id` 는 NOT NULL). 클라이언트가 받은 `s3_key` 를 들고 있다가
     지원서 제출(C2)에 함께 보내면 그때 행이 생긴다.
+
+    - **온프레미스(MinIO)**: 브라우저가 `minio:9000` 에 못 닿으므로 이 api 의 PUT URL
+      (`/files/blob-put`, 1회용 티켓) 을 준다. 브라우저는 api 로만 올린다.
+    - **AWS(실 S3)**: 기존 presigned PUT — 브라우저가 S3 로 직접 올린다.
+    두 경로 모두 `s3_key` 는 서버가 정하고 검증은 여기서 먼저 끝낸다.
     """
     ext = _extract_ext(body.filename)
     _validate_upload(ext, body.content_type, body.size_bytes)
 
     key = _build_key(ext, body.kind)
+    if _s3.ENDPOINT:
+        ticket = _issue_upload_ticket(key, body.content_type, body.size_bytes)
+        upload_url = (
+            f"{_api_base(request)}/api/v1/files/blob-put"
+            f"?ticket={urllib.parse.quote(ticket)}"
+        )
+    else:
+        upload_url = presign_put(key, body.content_type, body.size_bytes)
     return PresignUploadResponse(
-        upload_url=presign_put(key, body.content_type, body.size_bytes),
+        upload_url=upload_url,
         s3_key=key,
         expires_in=EXPIRES_IN,
     )
+
+
+@router.put("/files/blob-put")
+async def blob_put(ticket: str, request: Request):
+    """온프레미스 업로드 수신 (presign-upload 가 이 URL 을 준다).
+
+    브라우저가 `minio:9000` 에 직접 PUT 할 수 없어 서버가 바이트를 받아 MinIO 에 넣는다.
+    티켓이 키·타입·크기를 못박아 오므로 클라이언트가 임의 위치·임의 크기로 못 쓴다.
+    파일 본문(≤50MB)을 통째로 메모리에 올린다 — 이력서 10MB 상한 기준 무해하다.
+    """
+    redeemed = _redeem_upload_ticket(ticket)
+    if redeemed is None:
+        raise HTTPException(http.HTTP_401_UNAUTHORIZED, "업로드 티켓이 유효하지 않습니다")
+    s3_key, content_type, size_bytes = redeemed
+    data = await request.body()
+    if not data:
+        raise HTTPException(http.HTTP_422_UNPROCESSABLE_ENTITY, "빈 파일입니다")
+    # presign 때 신고한 크기를 넘기면 거부한다 — 옛 presigned PUT 의 ContentLength 서명과 같은 방어.
+    if len(data) > max(size_bytes, 0):
+        raise HTTPException(http.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "파일이 신고한 크기를 넘습니다")
+    _s3._client().put_object(
+        Bucket=_s3.BUCKET, Key=s3_key, Body=data, ContentType=content_type
+    )
+    return {"ok": True, "s3_key": s3_key, "size_bytes": len(data)}
 
 
 @router.get(
@@ -241,25 +330,15 @@ def presign_download(
     if row is None:
         raise HTTPException(http.HTTP_404_NOT_FOUND, "파일을 찾을 수 없습니다")
 
-    if db.get(FileBlob, file_id) is not None:
-        # 온프레미스 경로. 프론트가 `window.open(download_url)` 을 하니 절대 URL 이 필요하다.
-        # base 는 세 순위로 정한다: (1) `PUBLIC_API_BASE_URL` 환경변수 — 온프레미스처럼
-        # 최종 스킴이 정해져 있을 때 이걸 못박아 둬야 안전하다 (2) `Cf-Visitor` — Cloudflare
-        # Tunnel 이 붙이는 원래 스킴, `{"scheme":"https"}` (3) 헤더/요청 스킴. 이유:
-        # cloudflared → Caddy 는 http 로 오므로 Caddy 는 `X-Forwarded-Proto: http` 를
-        # 붙여 넘긴다. 그 값으로 URL 을 만들면 브라우저가 https 페이지에서 mixed-content
-        # 로 막는다 (2026-09-17 실측).
+    # 온프레미스(MinIO)면 본문이 `file_blobs`(이관 스크립트) 든 MinIO(브라우저 업로드) 든
+    # 브라우저는 `minio:9000` 에 못 닿으므로 항상 api 스트리밍 티켓을 준다. AWS(실 S3)만
+    # presigned GET 로 폴백한다. 티켓·절대 URL 근거는 파일 머리말·_api_base 참고.
+    if db.get(FileBlob, file_id) is not None or _s3.ENDPOINT:
         ticket = _issue_file_ticket(file_id, user.id)
-        base = os.getenv("PUBLIC_API_BASE_URL", "").rstrip("/")
-        if not base:
-            cf_visitor = request.headers.get("cf-visitor") or ""
-            scheme = (
-                request.headers.get("x-forwarded-proto")
-                or ("https" if '"scheme":"https"' in cf_visitor else request.url.scheme)
-            )
-            host = request.headers.get("host") or request.url.netloc
-            base = f"{scheme}://{host}"
-        url = f"{base}/api/v1/files/{file_id}/download?ticket={urllib.parse.quote(ticket)}"
+        url = (
+            f"{_api_base(request)}/api/v1/files/{file_id}/download"
+            f"?ticket={urllib.parse.quote(ticket)}"
+        )
         return PresignDownloadResponse(
             download_url=url,
             filename=row.filename,
@@ -289,9 +368,23 @@ def download_file(
     if _redeem_file_ticket(ticket, file_id) is None:
         raise HTTPException(http.HTTP_401_UNAUTHORIZED, "티켓이 유효하지 않습니다")
     row = db.get(File, file_id)
-    blob = db.get(FileBlob, file_id)
-    if row is None or blob is None:
+    if row is None:
         raise HTTPException(http.HTTP_404_NOT_FOUND, "파일을 찾을 수 없습니다")
+
+    # 본문은 두 곳 중 하나: `file_blobs`(이관 스크립트로 넣은 더미 데이터) 또는
+    # MinIO(브라우저 업로드 · blob-put). 둘 다 서버가 읽어 스트리밍한다.
+    blob = db.get(FileBlob, file_id)
+    if blob is not None:
+        content = blob.content
+        size = blob.size_bytes
+    elif _s3.ENDPOINT:
+        try:
+            content = _s3.read_object(row.s3_key)
+        except Exception:
+            raise HTTPException(http.HTTP_404_NOT_FOUND, "파일 본문을 찾을 수 없습니다")
+        size = len(content)
+    else:
+        raise HTTPException(http.HTTP_404_NOT_FOUND, "파일 본문을 찾을 수 없습니다")
 
     ascii_fallback = row.filename.encode("ascii", "replace").decode("ascii")
     utf8_encoded = urllib.parse.quote(row.filename, safe="")
@@ -299,13 +392,13 @@ def download_file(
     # 이력서는 블록체인 앵커(ADR-0028)로 원본 무결성이 걸려 있어 저장·수정 흐름이 없다.
     # 뷰어가 지원 못 하는 형식(docx/hwp) 은 브라우저가 알아서 저장 다이얼로그로 폴백.
     return StreamingResponse(
-        io.BytesIO(blob.content),
+        io.BytesIO(content),
         media_type=row.content_type or "application/octet-stream",
         headers={
             "Content-Disposition": (
                 f'inline; filename="{ascii_fallback}"; '
                 f"filename*=UTF-8''{utf8_encoded}"
             ),
-            "Content-Length": str(blob.size_bytes),
+            "Content-Length": str(size),
         },
     )
